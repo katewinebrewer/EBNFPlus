@@ -1,0 +1,38 @@
+dspreg 	; useage
+		;   call dspreg
+		;    db "rax"  ; rbx, rcx, rdx, rcx, rsi, rdi also supported
+;******************************************************************************
+	; Calls: inthex, inthex, syscall, Message, syscall, end.
+
+dsprex 	; useage
+		;   call dsprex
+		;    db "r08"  ; r09 ..r15 also supported
+;******************************************************************************
+	; Calls: inthex, inthex, syscall, syscall, end.
+
+dspstr ; <call dspstr> <dd len>  <dq add>
+;	.text	call	dmphex
+;	 	 dd	lsEBNF
+;	 	 dq	sEBNF
+;******************************************************************************
+	; Calls: syscall, end.
+
+dmphexrsi		;dump memory,
+; syntax: call dmphex with rsi as start address 40 bytes will be displayed
+;----------------------------------------------------
+	; Calls: dmphexOld, end.
+
+dmphex10	;dump memory, syntax: call dmphex dq add, with add as start address
+		;10 bytes will be displayed
+;----------------------------------------------------
+	; Calls: dmphexOld, end.
+
+dmphex		;dump memory, syntax: call dmphex dq add, with add as start address
+		;40 bytes will be displayed
+;----------------------------------------------------
+	; Calls: dmphexOld, end.
+
+dmphexOld		;dump memory, syntax: call dmphex with rsi as begin and rdi as end address
+;----------------------------------------------------
+	; Calls: inthex, inthex, b8hex, b8hex, b8chr, b8chr, syscall, inthex, inthex, inthex, inthex, inthex, inthex, inthex, inthex, inthex, inthex, inthex, inthex, inthex, inthex, inthex, inthex, intbin, intbin, inthex, inthex, syscall, end.
+

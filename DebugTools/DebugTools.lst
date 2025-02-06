@@ -1,0 +1,1016 @@
+     1                                  ;******************************************************************************
+     2                                  GLOBAL dspreg, dsprex, dspxmm, dspymm, dmphex, dmpreg, dmprex, dmpxmm, dmpymm
+     3                                  GLOBAL dmphexrsi, dmphexold
+     4                                  GLOBAL quit, msg
+     5                                  
+     6                                   
+     7                                  ;------------------ DEBUG TOOLS -----------------------------------------------
+     8                                  ;	<dspstr> display string, code inline operands
+     9                                  ;	<dmpreg> dump registers rax..
+    10                                  ;	<dmprex> dump registers r08..r15
+    11                                  ;	<dmpxmm> dump registers xmm0..xmm15
+    12                                  ;	<dmphex> dump memory, call dsphex, dq address will print out 0x40 bytes
+    13                                  ;	<dspreg> display rnx, e.g. call dspreg, db "rbp"
+    14                                  ;	copyright 2020 hans wijnands
+    15                                  ;----------------------------------------------------
+    16                                  
+    17                                  
+    18                                  ;----------------------------------------------------
+    19                                  ;xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    20                                  ;                            EBNF Debug tools
+    21                                  ; dspebnf shows the status of the EBNF parser:
+    22                                  ; line 1	pOK = True/False	InEnd = True/False
+    23                                  ; line 2..5 	hex dump sIn up to <InPnt>
+    24                                  ; line 7..10	hex dump sIn as from <InPnt>
+    25                                  ; line 11 ..12  LastIn pointer & length
+    26                                  ;xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    27                                  
+    28                                  SECTION .text
+    29                                  
+    30                                  ;******************************************************************************
+    31                                  dspreg: 	; usage
+    32                                  		;   call dspreg
+    33                                  		;    db "rax"  ; rbx, rcx, rdx, rcx, rsi, rdi also supported
+    34                                  ;******************************************************************************
+    35 00000000 9C                      	pushf		; 64
+    36 00000001 50                      	push rax	; 56
+    37 00000002 53                      	push rbx	; 48
+    38 00000003 51                      	push rcx	; 40
+    39 00000004 52                      	push rdx	; 32
+    40 00000005 56                      	push rsi	; 24
+    41 00000006 57                      	push rdi	; 16
+    42 00000007 55                      	push rbp	; 8
+    43 00000008 54                      	push rsp	; 0
+    44                                  
+    45 00000009 488B6C2448              	mov rbp, [rsp+72]
+    46 0000000E 488B4500                	mov rax, [rbp]
+    47 00000012 488344244803            	add qword [rsp+72], 03
+    48 00000018 4825FFFFFF00            	and rax, 0xFFFFFF
+    49                                  
+    50 0000001E 483D72617800            	 cmp rax, "rax"
+    51 00000024 7507                    	 jne dspreg1
+    52 00000026 488B5C2438              	 mov rbx, [rsp+56]
+    53 0000002B EB79                    	 jmp dspreg0
+    54 0000002D 483D72627800            dspreg1: cmp rax, "rbx"
+    55 00000033 7507                    	 jne dspreg2
+    56 00000035 488B5C2430              	 mov rbx, [rsp+48]
+    57 0000003A EB6A                    	 jmp dspreg0
+    58 0000003C 483D72637800            dspreg2: cmp rax, "rcx"
+    59 00000042 7507                    	 jne dspreg3	 
+    60 00000044 488B5C2428              	 mov rbx, [rsp+40]
+    61 00000049 EB5B                    	 jmp dspreg0
+    62 0000004B 483D72647800            dspreg3: cmp rax, "rdx"
+    63 00000051 7507                    	 jne dspreg4
+    64 00000053 488B5C2420              	 mov rbx, [rsp+32]
+    65 00000058 EB4C                    	 jmp dspreg0
+    66 0000005A 483D72736900            dspreg4: cmp rax, "rsi"
+    67 00000060 7507                    	 jne dspreg5
+    68 00000062 488B5C2418              	 mov rbx, [rsp+24]
+    69 00000067 EB3D                    	 jmp dspreg0
+    70 00000069 483D72646900            dspreg5: cmp rax, "rdi"
+    71 0000006F 7507                    	 jne dspreg6
+    72 00000071 488B5C2410              	 mov rbx, [rsp+16]
+    73 00000076 EB2E                    	 jmp dspreg0
+    74 00000078 483D72627000            dspreg6: cmp rax, "rbp"
+    75 0000007E 7507                    	 jne dspreg7
+    76 00000080 488B5C2408              	 mov rbx, [rsp+8]
+    77 00000085 EB1F                    	 jmp dspreg0
+    78 00000087 483D666C6700            dspreg7: cmp rax, "flg"
+    79 0000008D 7507                    	 jne dspreg8
+    80 0000008F 488B5C2440              	 mov rbx, [rsp+64]
+    81 00000094 EB10                    	 jmp dspreg0
+    82 00000096 483D72737000            dspreg8: cmp rax, "rsp"
+    83 0000009C 7566                    	 jne dspregerr
+    84 0000009E 488B1C24                	 mov rbx, [rsp]
+    85 000000A2 4883C348                	 add rbx, 0x48
+    86                                  ;	 jmp dspreg0
+    87                                  	 
+    88                                  dspreg0:
+    89 000000A6 48BF-                   	mov rdi, sOutDmp
+    89 000000A8 [0000000000000000] 
+    90 000000B0 FC                      	cld
+    91 000000B1 AB                      	stosd
+    92 000000B2 C647FF3A                	mov byte [rdi-1],":"
+    93 000000B6 C647082D                	mov byte [rdi+8],"-"
+    94 000000BA C647110A                	mov byte [rdi+17],10
+    95                                  
+    96 000000BE 53                      	push rbx
+    97 000000BF 8B0424                  	mov eax,[rsp]
+    98 000000C2 BF15000000              	mov rdi,21
+    99 000000C7 E8F8070000              	call inthex
+   100 000000CC 8B442404                	mov eax,[rsp+4]
+   101 000000D0 BF0C000000              	mov rdi,12
+   102 000000D5 E8EA070000              	call inthex
+   103 000000DA 5B                      	pop rbx
+   104                                  	
+   105 000000DB B801000000              	mov rax,1
+   106 000000E0 BF01000000              	mov rdi,1
+   107 000000E5 48BE-                   	mov rsi, sOutDmp
+   107 000000E7 [0000000000000000] 
+   108 000000EF BA16000000              	mov rdx, 22
+   109 000000F4 4153                    	push r11
+   110 000000F6 0F05                    	syscall
+   111 000000F8 415B                    	pop r11
+   112                                  
+   113 000000FA 5C                      	pop rsp
+   114 000000FB 5D                      	pop rbp
+   115 000000FC 5F                      	pop rdi
+   116 000000FD 5E                      	pop rsi
+   117 000000FE 5A                      	pop rdx
+   118 000000FF 59                      	pop rcx
+   119 00000100 5B                      	pop rbx
+   120 00000101 58                      	pop rax
+   121 00000102 9D                      	popf
+   122 00000103 C3                      	ret
+   123                                  dspregerr:
+   124 00000104 E8F1040000              	call msg		
+   125 00000109 120A556E6B6E6F776E-     	 db 18,10, "Unknown register", 10
+   125 00000112 207265676973746572-
+   125 0000011B 0A                 
+   126                                  
+   127 0000011C BF15000000               	mov rdi, 21		; 0 = success exit code
+   128 00000121 B83C000000              	mov rax, 60		; 60 = exit
+   129 00000126 0F05                    	syscall	; quit  
+   130                                  
+   131                                  ;******************************************************************************
+   132                                  dsprex: 	; usage
+   133                                  		;   call dsprex
+   134                                  		;    db "r08"  ; r09 ..r15 also supported
+   135                                  ;******************************************************************************
+   136 00000128 9C                      	pushf		; 64
+   137 00000129 50                      	push rax	; 56
+   138 0000012A 53                      	push rbx	; 48
+   139 0000012B 51                      	push rcx	; 40
+   140 0000012C 52                      	push rdx	; 32
+   141 0000012D 56                      	push rsi	; 24
+   142 0000012E 57                      	push rdi	; 16
+   143 0000012F 55                      	push rbp	; 8
+   144 00000130 54                      	push rsp	; 0
+   145                                  	
+   146 00000131 488B6C2448              	mov rbp, [rsp+72]
+   147 00000136 488B4500                	mov rax, [rbp]
+   148 0000013A 488344244803            	add qword [rsp+72], 03
+   149 00000140 4825FFFFFF00            	and rax, 0xFFFFFF
+   150                                  
+   151 00000146 483D72303800            	 cmp rax, "r08"
+   152 0000014C 7505                    	 jne dsprex1
+   153 0000014E 4C89C3                  	 mov rbx, r8
+   154 00000151 EB5D                    	 jmp dsprex0
+   155 00000153 483D72303900            dsprex1: cmp rax, "r09"
+   156 00000159 7505                    	 jne dsprex2
+   157 0000015B 4C89CB                  	 mov rbx, r9
+   158 0000015E EB50                    	 jmp dsprex0
+   159 00000160 483D72313000            dsprex2: cmp rax, "r10"
+   160 00000166 7505                    	 jne dsprex3	 
+   161 00000168 4C89D3                  	 mov rbx, r10
+   162 0000016B EB43                    	 jmp dsprex0
+   163 0000016D 483D72313100            dsprex3: cmp rax, "r11"
+   164 00000173 7505                    	 jne dsprex4
+   165 00000175 4C89DB                  	 mov rbx, r11
+   166 00000178 EB36                    	 jmp dsprex0
+   167 0000017A 483D72313200            dsprex4: cmp rax, "r12"
+   168 00000180 7505                    	 jne dsprex5
+   169 00000182 4C89E3                  	 mov rbx, r12
+   170 00000185 EB29                    	 jmp dsprex0
+   171 00000187 483D72313300            dsprex5: cmp rax, "r13"
+   172 0000018D 7505                    	 jne dsprex6
+   173 0000018F 4C89EB                  	 mov rbx, r13
+   174 00000192 EB1C                    	 jmp dsprex0
+   175 00000194 483D72313400            dsprex6: cmp rax, "r14"
+   176 0000019A 7505                    	 jne dsprex7
+   177 0000019C 4C89F3                  	 mov rbx, r14
+   178 0000019F EB0F                    	 jmp dsprex0
+   179 000001A1 483D72313500            dsprex7: cmp rax, "r15"
+   180 000001A7 0F8557FFFFFF            	 jne dspregerr
+   181 000001AD 4C89FB                  	 mov rbx, r15
+   182                                  	 
+   183                                  dsprex0:
+   184 000001B0 48BF-                   	mov rdi, sOutDmp
+   184 000001B2 [0000000000000000] 
+   185 000001BA FC                      	cld
+   186 000001BB AB                      	stosd
+   187 000001BC C647FF3A                	mov byte [rdi-1],":"
+   188 000001C0 C647082D                	mov byte [rdi+8],"-"
+   189 000001C4 C647110A                	mov byte [rdi+17],10
+   190                                  
+   191 000001C8 53                      	push rbx
+   192 000001C9 8B0424                  	mov eax,[rsp]
+   193 000001CC BF15000000              	mov rdi,21
+   194 000001D1 E8EE060000              	call inthex
+   195 000001D6 8B442404                	mov eax,[rsp+4]
+   196 000001DA BF0C000000              	mov rdi,12
+   197 000001DF E8E0060000              	call inthex
+   198 000001E4 5B                      	pop rbx
+   199                                  	
+   200 000001E5 B801000000              	mov rax,1
+   201 000001EA BF01000000              	mov rdi,1
+   202 000001EF 48BE-                   	mov rsi, sOutDmp
+   202 000001F1 [0000000000000000] 
+   203 000001F9 BA16000000              	mov rdx, 22
+   204 000001FE 4153                    	push r11
+   205 00000200 0F05                    	syscall
+   206 00000202 415B                    	pop r11
+   207                                  
+   208 00000204 5C                      	pop rsp
+   209 00000205 5D                      	pop rbp
+   210 00000206 5F                      	pop rdi
+   211 00000207 5E                      	pop rsi
+   212 00000208 5A                      	pop rdx
+   213 00000209 59                      	pop rcx
+   214 0000020A 5B                      	pop rbx
+   215 0000020B 58                      	pop rax
+   216                                  
+   217 0000020C 9D                      	popf
+   218 0000020D C3                      	ret
+   219                                  
+   220                                  ;--------------------------------------
+   221                                  dmprex:
+   222 0000020E E815FFFFFF              	call dsprex
+   223 00000213 723038                  	 db "r08"
+   224 00000216 E80DFFFFFF              	call dsprex
+   225 0000021B 723039                  	 db "r09"
+   226 0000021E E805FFFFFF              	call dsprex
+   227 00000223 723130                  	 db "r10"
+   228 00000226 E8FDFEFFFF              	call dsprex
+   229 0000022B 723131                  	 db "r11"
+   230 0000022E E8F5FEFFFF              	call dsprex
+   231 00000233 723132                  	 db "r12"
+   232 00000236 E8EDFEFFFF              	call dsprex
+   233 0000023B 723133                  	 db "r13"
+   234 0000023E E8E5FEFFFF              	call dsprex
+   235 00000243 723134                  	 db "r14"
+   236 00000246 E8DDFEFFFF              	call dsprex
+   237 0000024B 723135                  	 db "r15"
+   238 0000024E C3                      	ret
+   239                                  ;******************************************************************************
+   240                                  dspxmm: 	; usage
+   241                                  		;   call dspxmm
+   242                                  		;    db "0"  ; "1" .. "f"
+   243                                  ;******************************************************************************
+   244 0000024F 9C                      	pushf		; 64
+   245 00000250 50                      	push rax	; 56
+   246 00000251 53                      	push rbx	; 48
+   247 00000252 51                      	push rcx	; 40
+   248 00000253 52                      	push rdx	; 32
+   249 00000254 56                      	push rsi	; 24
+   250 00000255 57                      	push rdi	; 16
+   251 00000256 55                      	push rbp	; 8
+   252 00000257 54                      	push rsp	; 0
+   253                                  	
+   254 00000258 488B6C2448              	mov rbp, [rsp+72]
+   255                                  	
+   256 0000025D 8A4500                  	mov al, [rbp]
+   257 00000260 48FF442448              	inc qword [rsp+72]
+   258 00000265 4825FF000000            	and rax, 0xFF
+   259                                  
+   260 0000026B 4883EC10                	sub rsp, 16
+   261                                  	
+   262 0000026F 4883F830                	 cmp rax, "0"
+   263 00000273 750A                    	 jne dspxmm1
+   264 00000275 F30F7F0424              	 movdqu [rsp], xmm0
+   265 0000027A E9DC000000              	 jmp dspxmm0
+   266 0000027F 4883F831                dspxmm1: cmp rax, "1"
+   267 00000283 750A                    	 jne dspxmm2
+   268 00000285 F30F7F0C24              	 movdqu [rsp], xmm1
+   269 0000028A E9CC000000              	 jmp dspxmm0
+   270 0000028F 4883F832                dspxmm2: cmp rax, "2"
+   271 00000293 750A                    	 jne dspxmm3	 
+   272 00000295 F30F7F1424              	 movdqu [rsp], xmm2
+   273 0000029A E9BC000000              	 jmp dspxmm0
+   274 0000029F 4883F833                dspxmm3: cmp rax, "3"
+   275 000002A3 750A                    	 jne dspxmm4
+   276 000002A5 F30F7F1C24              	 movdqu [rsp], xmm3
+   277 000002AA E9AC000000              	 jmp dspxmm0
+   278 000002AF 4883F834                dspxmm4: cmp rax, "4"
+   279 000002B3 750A                    	 jne dspxmm5
+   280 000002B5 F30F7F2424              	 movdqu [rsp], xmm4
+   281 000002BA E99C000000              	 jmp dspxmm0
+   282 000002BF 4883F835                dspxmm5: cmp rax, "5"
+   283 000002C3 750A                    	 jne dspxmm6
+   284 000002C5 F30F7F2C24              	 movdqu [rsp], xmm5
+   285 000002CA E98C000000              	 jmp dspxmm0
+   286 000002CF 4883F836                dspxmm6: cmp rax, "6"
+   287 000002D3 7507                    	 jne dspxmm7
+   288 000002D5 F30F7F3424              	 movdqu [rsp], xmm6
+   289 000002DA EB7F                    	 jmp dspxmm0
+   290 000002DC 4883F837                dspxmm7: cmp rax, "7"
+   291 000002E0 7507                    	 jne dspxmm8
+   292 000002E2 F30F7F3C24              	 movdqu [rsp], xmm7
+   293 000002E7 EB72                    	 jmp dspxmm0
+   294                                  ; ----
+   295 000002E9 4883F838                dspxmm8: cmp rax, "8"
+   296 000002ED 7508                    	 jne dspxmm9
+   297 000002EF F3440F7F0424            	 movdqu [rsp], xmm8
+   298 000002F5 EB64                    	 jmp dspxmm0
+   299 000002F7 4883F839                dspxmm9: cmp rax, "9"
+   300 000002FB 7508                    	 jne dspxmma
+   301 000002FD F3440F7F0C24            	 movdqu [rsp], xmm9
+   302 00000303 EB56                    	 jmp dspxmm0
+   303 00000305 4883F861                dspxmma: cmp rax, "a"
+   304 00000309 7508                    	 jne dspxmmb	 
+   305 0000030B F3440F7F1424            	 movdqu [rsp], xmm10
+   306 00000311 EB48                    	 jmp dspxmm0
+   307 00000313 4883F862                dspxmmb: cmp rax, "b"
+   308 00000317 7508                    	 jne dspxmmc
+   309 00000319 F3440F7F1C24            	 movdqu [rsp], xmm11
+   310 0000031F EB3A                    	 jmp dspxmm0
+   311 00000321 4883F863                dspxmmc: cmp rax, "c"
+   312 00000325 7508                    	 jne dspxmmd
+   313 00000327 F3440F7F2424            	 movdqu [rsp], xmm12
+   314 0000032D EB2C                    	 jmp dspxmm0
+   315 0000032F 4883F864                dspxmmd: cmp rax, "d"
+   316 00000333 7508                    	 jne dspxmme
+   317 00000335 F3440F7F2C24            	 movdqu [rsp], xmm13
+   318 0000033B EB1E                    	 jmp dspxmm0
+   319 0000033D 4883F865                dspxmme: cmp rax, "e"
+   320 00000341 7508                    	 jne dspxmmf
+   321 00000343 F3440F7F3424            	 movdqu [rsp], xmm14
+   322 00000349 EB10                    	 jmp dspxmm0
+   323 0000034B 4883F866                dspxmmf: cmp rax, "f"
+   324 0000034F 0F85AFFDFFFF            	 jne dspregerr
+   325 00000355 F3440F7F3C24            	 movdqu [rsp], xmm15
+   326                                  ; ---- 
+   327                                  dspxmm0:
+   328 0000035B 48BF-                   	mov rdi, sOutDmp
+   328 0000035D [0000000000000000] 
+   329 00000365 FC                      	cld
+   330 00000366 48C1E010                	shl rax, 16
+   331 0000036A 66B8786D                	mov ax, "xm"
+   332 0000036E AB                      	stosd
+   333 0000036F C647FF3A                	mov byte [rdi- 1],":"
+   334 00000373 C647082D                	mov byte [rdi+ 8],"-"
+   335 00000377 C6471120                	mov byte [rdi+17]," "
+   336 0000037B C6471A2D                	mov byte [rdi+26],"-"
+   337 0000037F C647230A                	mov byte [rdi+35],10
+   338                                  
+   339 00000383 8B0424                  	mov eax,[rsp]
+   340 00000386 BF27000000              	mov rdi,39	;21
+   341 0000038B E834050000              	call inthex
+   342 00000390 8B442404                	mov eax,[rsp+4]
+   343 00000394 BF1E000000              	mov rdi,30	;12
+   344 00000399 E826050000              	call inthex
+   345                                  
+   346 0000039E 8B442408                	mov eax,[rsp+8]
+   347 000003A2 BF15000000              	mov rdi,21	;39
+   348 000003A7 E818050000              	call inthex
+   349 000003AC 8B44240C                	mov eax,[rsp+12]
+   350 000003B0 BF0C000000              	mov rdi,12	;30
+   351 000003B5 E80A050000              	call inthex
+   352                                  
+   353 000003BA 4883C410                	add rsp, 16	
+   354                                  
+   355 000003BE B801000000              	mov rax,1
+   356 000003C3 BF01000000              	mov rdi,1
+   357 000003C8 48BE-                   	mov rsi, sOutDmp
+   357 000003CA [0000000000000000] 
+   358 000003D2 BA28000000              	mov rdx, 40
+   359 000003D7 4153                    	push r11
+   360 000003D9 0F05                    	syscall
+   361 000003DB 415B                    	pop r11
+   362                                  
+   363 000003DD 5C                      	pop rsp
+   364 000003DE 5D                      	pop rbp
+   365 000003DF 5F                      	pop rdi
+   366 000003E0 5E                      	pop rsi
+   367 000003E1 5A                      	pop rdx
+   368 000003E2 59                      	pop rcx
+   369 000003E3 5B                      	pop rbx
+   370 000003E4 58                      	pop rax
+   371                                  
+   372 000003E5 9D                      	popf
+   373 000003E6 C3                      	ret
+   374                                  ;--------------------------------------
+   375                                  dmpxmm:
+   376 000003E7 E863FEFFFF              	call dspxmm
+   377 000003EC 30                      	 db "0"
+   378 000003ED E85DFEFFFF              	call dspxmm
+   379 000003F2 31                      	 db "1"
+   380 000003F3 E857FEFFFF              	call dspxmm
+   381 000003F8 32                      	 db "2"
+   382 000003F9 E851FEFFFF              	call dspxmm
+   383 000003FE 33                      	 db "3"
+   384 000003FF E84BFEFFFF              	call dspxmm
+   385 00000404 34                      	 db "4"
+   386 00000405 E845FEFFFF              	call dspxmm
+   387 0000040A 35                      	 db "5"
+   388 0000040B E83FFEFFFF              	call dspxmm
+   389 00000410 36                      	 db "6"
+   390 00000411 E839FEFFFF              	call dspxmm
+   391 00000416 37                      	 db "7"
+   392 00000417 E833FEFFFF              	call dspxmm
+   393 0000041C 38                      	 db "8"
+   394 0000041D E82DFEFFFF              	call dspxmm
+   395 00000422 39                      	 db "9"
+   396 00000423 E827FEFFFF              	call dspxmm
+   397 00000428 61                      	 db "a"
+   398 00000429 E821FEFFFF              	call dspxmm
+   399 0000042E 62                      	 db "b"
+   400 0000042F E81BFEFFFF              	call dspxmm
+   401 00000434 63                      	 db "c"
+   402 00000435 E815FEFFFF              	call dspxmm
+   403 0000043A 64                      	 db "d"
+   404 0000043B E80FFEFFFF              	call dspxmm
+   405 00000440 65                      	 db "e"
+   406 00000441 E809FEFFFF              	call dspxmm
+   407 00000446 66                      	 db "f"
+   408 00000447 C3                      	ret
+   409                                  
+   410                                  ;******************************************************************************
+   411                                  dspymm: 	; usage
+   412                                  		;   call dspymm
+   413                                  		;    db "0"  ; "1" .. "7" also supported
+   414                                  ;******************************************************************************
+   415 00000448 9C                      	pushf		; 64
+   416 00000449 50                      	push rax	; 56
+   417 0000044A 53                      	push rbx	; 48
+   418 0000044B 51                      	push rcx	; 40
+   419 0000044C 52                      	push rdx	; 32
+   420 0000044D 56                      	push rsi	; 24
+   421 0000044E 57                      	push rdi	; 16
+   422 0000044F 55                      	push rbp	; 8
+   423 00000450 54                      	push rsp	; 0
+   424                                  	
+   425 00000451 488B6C2448              	mov rbp, [rsp+72]
+   426                                  	
+   427 00000456 8A4500                  	mov al, [rbp]
+   428 00000459 48FF442448              	inc qword [rsp+72]
+   429 0000045E 4825FF000000            	and rax, 0xFF
+   430                                  
+   431 00000464 4883EC20                	sub rsp, 32
+   432                                  	
+   433 00000468 4883F830                	 cmp rax, "0"
+   434 0000046C 7507                    	 jne dspymm1
+   435 0000046E C5FE7F0424              	 vmovdqu [rsp], ymm0
+   436 00000473 EB5D                    	 jmp dspymm0
+   437 00000475 4883F831                dspymm1: cmp rax, "1"
+   438 00000479 7507                    	 jne dspymm2
+   439 0000047B C5FE7F0C24              	 vmovdqu [rsp], ymm1
+   440 00000480 EB50                    	 jmp dspymm0
+   441 00000482 4883F832                dspymm2: cmp rax, "2"
+   442 00000486 7507                    	 jne dspymm3	 
+   443 00000488 C5FE7F1424              	 vmovdqu [rsp], ymm2
+   444 0000048D EB43                    	 jmp dspymm0
+   445 0000048F 4883F833                dspymm3: cmp rax, "3"
+   446 00000493 7507                    	 jne dspymm4
+   447 00000495 C5FE7F1C24              	 vmovdqu [rsp], ymm3
+   448 0000049A EB36                    	 jmp dspymm0
+   449 0000049C 4883F834                dspymm4: cmp rax, "4"
+   450 000004A0 7507                    	 jne dspymm5
+   451 000004A2 C5FE7F2424              	 vmovdqu [rsp], ymm4
+   452 000004A7 EB29                    	 jmp dspymm0
+   453 000004A9 4883F835                dspymm5: cmp rax, "5"
+   454 000004AD 7507                    	 jne dspymm6
+   455 000004AF C5FE7F2C24              	 vmovdqu [rsp], ymm5
+   456 000004B4 EB1C                    	 jmp dspymm0
+   457 000004B6 4883F836                dspymm6: cmp rax, "6"
+   458 000004BA 7507                    	 jne dspymm7
+   459 000004BC C5FE7F3424              	 vmovdqu [rsp], ymm6
+   460 000004C1 EB0F                    	 jmp dspymm0
+   461 000004C3 4883F837                dspymm7: cmp rax, "7"
+   462 000004C7 0F8537FCFFFF            	 jne dspregerr
+   463 000004CD C5FE7F3C24              	 vmovdqu [rsp], ymm7
+   464                                  	 
+   465                                  dspymm0:
+   466 000004D2 48BF-                   	mov rdi, sOutDmp
+   466 000004D4 [0000000000000000] 
+   467 000004DC FC                      	cld
+   468 000004DD 48C1E010                	shl rax, 16
+   469 000004E1 66B8796D                	mov ax, "ym"
+   470 000004E5 AB                      	stosd
+   471 000004E6 C647FF3A                	mov byte [rdi- 1],":"
+   472 000004EA C647082D                	mov byte [rdi+ 8],"-"
+   473 000004EE C6471120                	mov byte [rdi+17]," "
+   474 000004F2 C6471A2D                	mov byte [rdi+26],"-"
+   475 000004F6 C6472320                	mov byte [rdi+35]," "
+   476 000004FA C6472C2D                	mov byte [rdi+44],"-"
+   477 000004FE C6473520                	mov byte [rdi+53]," "
+   478 00000502 C6473E2D                	mov byte [rdi+62],"-"
+   479 00000506 C647470A                	mov byte [rdi+71],10
+   480                                  
+   481 0000050A 8B0424                  	mov eax,[rsp]
+   482 0000050D BF15000000              	mov rdi,21
+   483 00000512 E8AD030000              	call inthex
+   484 00000517 8B442404                	mov eax,[rsp+4]
+   485 0000051B BF0C000000              	mov rdi,12
+   486 00000520 E89F030000              	call inthex
+   487                                  
+   488 00000525 8B442408                	mov eax,[rsp+8]
+   489 00000529 BF27000000              	mov rdi,39
+   490 0000052E E891030000              	call inthex
+   491 00000533 8B44240C                	mov eax,[rsp+12]
+   492 00000537 BF1E000000              	mov rdi,30
+   493 0000053C E883030000              	call inthex
+   494                                  	
+   495 00000541 8B442410                	mov eax,[rsp+16]
+   496 00000545 BF39000000              	mov rdi,57
+   497 0000054A E875030000              	call inthex
+   498 0000054F 8B442414                	mov eax,[rsp+20]
+   499 00000553 BF30000000              	mov rdi,48
+   500 00000558 E867030000              	call inthex
+   501                                  
+   502 0000055D 8B442418                	mov eax,[rsp+24]
+   503 00000561 BF4B000000              	mov rdi,75
+   504 00000566 E859030000              	call inthex
+   505 0000056B 8B44241C                	mov eax,[rsp+28]
+   506 0000056F BF42000000              	mov rdi,66
+   507 00000574 E84B030000              	call inthex
+   508                                  
+   509 00000579 4883C420                	add rsp, 32	
+   510                                  
+   511 0000057D B801000000              	mov rax,1
+   512 00000582 BF01000000              	mov rdi,1
+   513 00000587 48BE-                   	mov rsi, sOutDmp
+   513 00000589 [0000000000000000] 
+   514 00000591 BA4C000000              	mov rdx, 76
+   515 00000596 4153                    	push r11
+   516 00000598 0F05                    	syscall
+   517 0000059A 415B                    	pop r11
+   518                                  
+   519 0000059C 5C                      	pop rsp
+   520 0000059D 5D                      	pop rbp
+   521 0000059E 5F                      	pop rdi
+   522 0000059F 5E                      	pop rsi
+   523 000005A0 5A                      	pop rdx
+   524 000005A1 59                      	pop rcx
+   525 000005A2 5B                      	pop rbx
+   526 000005A3 58                      	pop rax
+   527                                  
+   528 000005A4 9D                      	popf
+   529 000005A5 C3                      	ret
+   530                                  ;--------------------------------------
+   531                                  dmpymm:
+   532 000005A6 E89DFEFFFF              	call dspymm
+   533 000005AB 30                      	 db "0"
+   534 000005AC E897FEFFFF              	call dspymm
+   535 000005B1 31                      	 db "1"
+   536 000005B2 E891FEFFFF              	call dspymm
+   537 000005B7 32                      	 db "2"
+   538 000005B8 E88BFEFFFF              	call dspymm
+   539 000005BD 33                      	 db "3"
+   540 000005BE E885FEFFFF              	call dspymm
+   541 000005C3 34                      	 db "4"
+   542 000005C4 E87FFEFFFF              	call dspymm
+   543 000005C9 35                      	 db "5"
+   544 000005CA E879FEFFFF              	call dspymm
+   545 000005CF 36                      	 db "6"
+   546 000005D0 E873FEFFFF              	call dspymm
+   547 000005D5 37                      	 db "7"
+   548 000005D6 C3                      	ret
+   549                                  ; -----------------------------------------------------------------------------	
+   550                                  MessageOld:
+   551 000005D7 5E                      	pop rsi
+   552 000005D8 4831C0                  	xor rax, rax
+   553 000005DB FC                      	cld
+   554 000005DC AC                      	lodsb		; rsi points now to string	ready for syscall
+   555 000005DD 4889C2                  	mov rdx, rax	; rdx = length string,		ready for syscall
+   556 000005E0 4889F7                  	mov rdi, rsi
+   557 000005E3 4801D7                  	add rdi, rdx
+   558 000005E6 57                      	push rdi	; return address
+   559 000005E7 51                      	push rcx	; retain rcx=rPOk
+   560 000005E8 B801000000              	mov rax,1
+   561 000005ED BF01000000              	mov rdi,1
+   562 000005F2 4153                    	push r11
+   563 000005F4 0F05                    	syscall
+   564 000005F6 415B                    	pop r11
+   565 000005F8 59                      	pop rcx
+   566 000005F9 C3                      	ret
+   567                                  	
+   568                                  msg:			; offset to rsp0
+   569 000005FA 50                      	push rax	; -8
+   570 000005FB 51                      	push rcx	; -16
+   571 000005FC 52                      	push rdx	; -24
+   572 000005FD 56                      	push rsi	; -32
+   573 000005FE 57                      	push rdi	; -40
+   574 000005FF 4153                    	push r11 	; -48
+   575 00000601 9C                      	pushf 		; -56
+   576                                  	
+   577 00000602 488B742438              	mov rsi, [rsp+ 56]
+   578 00000607 4831C0                  	xor rax, rax
+   579 0000060A FC                      	cld
+   580 0000060B AC                      	lodsb		; rsi points now to string	ready for syscall
+   581 0000060C 4889C2                  	mov rdx, rax	; rdx = length string,		ready for syscall
+   582 0000060F 48FFC0                  	inc rax		; step also over len byte
+   583 00000612 4801442438              	add [rsp+56], rax ; adapt return address
+   584 00000617 B801000000              	mov rax,1
+   585 0000061C BF01000000              	mov rdi,1
+   586 00000621 0F05                    	syscall
+   587                                  	
+   588 00000623 9D                      	popf
+   589 00000624 415B                    	pop r11
+   590 00000626 5F                      	pop rdi
+   591 00000627 5E                      	pop rsi
+   592 00000628 5A                      	pop rdx
+   593 00000629 59                      	pop rcx
+   594 0000062A 58                      	pop rax
+   595 0000062B C3                      	ret
+   596                                  	
+   597                                  ;******************************************************************************
+   598                                  dspstr: ; <call dspstr> <dd len>  <dq add>
+   599                                  ;	.text	call	dmphex
+   600                                  ;	 	 dd	lsEBNF
+   601                                  ;	 	 dq	sEBNF
+   602                                  ;******************************************************************************
+   603 0000062C 50                      	push rax
+   604 0000062D 51                      	push rcx
+   605 0000062E 56                      	push rsi
+   606 0000062F 57                      	push rdi
+   607 00000630 52                      	push rdx
+   608                                  
+   609 00000631 B801000000                 	mov rax, 1	; 1 = write
+   610 00000636 BF01000000              	mov rdi, 1	; 1 = to stdout
+   611 0000063B 488B542428              	mov rdx, [rsp+40]	; get pntr after the call instr
+   612 00000640 488B7204                	mov rsi, [rdx+4]	; get string add next 4 but 
+   613 00000644 8B12                    	mov edx, [rdx]		; get length; destroying rdx so don't use for more inline operands
+   614 00000646 48834424280C            	add qword [rsp+40], 12	; correct return stack (dd+dq=12b)
+   615 0000064C 4153                    	push r11
+   616 0000064E 0F05                    	syscall
+   617 00000650 415B                    	pop r11		; display the string, what is syscall using actually? if a real call,
+   618                                   			; then we can jmp and skip ret
+   619 00000652 5A                       	pop rdx
+   620 00000653 5F                       	pop rdi
+   621 00000654 5E                       	pop rsi
+   622 00000655 59                       	pop rcx
+   623 00000656 58                       	pop rax
+   624 00000657 C3                       	ret
+   625                                   
+   626                                  ;----------------------------------------------------
+   627                                  dmphexrsi:		;dump memory,
+   628                                  ; syntax: call dmphex with rsi as start address 40 bytes will be displayed
+   629                                  ;----------------------------------------------------
+   630 00000658 9C                      	pushf
+   631 00000659 56                      	push rsi
+   632 0000065A 57                      	push rdi
+   633 0000065B 4889F7                  	mov rdi, rsi
+   634 0000065E 4883C740                 	add rdi, 0x40
+   635 00000662 E846000000               	call dmphexold
+   636 00000667 5F                       	pop rdi
+   637 00000668 5E                       	pop rsi
+   638 00000669 9D                       	popf
+   639 0000066A C3                       	ret
+   640                                  
+   641                                  ;----------------------------------------------------
+   642                                  dmphex10:	;dump memory, syntax: call dmphex dq add, with add as start address
+   643                                  		;10 bytes will be displayed
+   644                                  ;----------------------------------------------------
+   645 0000066B 9C                      	pushf
+   646 0000066C 56                      	push rsi
+   647 0000066D 57                      	push rdi
+   648 0000066E 488B742418              	mov rsi, [rsp+24]
+   649 00000673 488B36                  	mov rsi, [rsi]
+   650                                  
+   651 00000676 488344241808            	add qword [rsp+24],08
+   652 0000067C 4889F7                  	mov rdi, rsi
+   653 0000067F 4883C710                 	add rdi, 0x10
+   654                                  
+   655 00000683 E825000000               	call dmphexold
+   656                                  
+   657 00000688 5F                       	pop rdi
+   658 00000689 5E                       	pop rsi
+   659 0000068A 9D                       	popf
+   660 0000068B C3                       	ret
+   661                                  
+   662                                  ;----------------------------------------------------
+   663                                  dmphex:		;dump memory, syntax: call dmphex dq add, with add as start address
+   664                                  		;40 bytes will be displayed
+   665                                  ;----------------------------------------------------
+   666 0000068C 9C                      	pushf
+   667 0000068D 56                      	push rsi
+   668 0000068E 57                      	push rdi
+   669 0000068F 488B742418              	mov rsi, [rsp+24]
+   670 00000694 488B36                  	mov rsi, [rsi]
+   671                                  
+   672 00000697 488344241808            	add qword [rsp+24],08
+   673 0000069D 4889F7                  	mov rdi, rsi
+   674 000006A0 4883C740                 	add rdi, 0x40
+   675                                  
+   676 000006A4 E804000000               	call dmphexold
+   677                                  
+   678 000006A9 5F                       	pop rdi
+   679 000006AA 5E                       	pop rsi
+   680 000006AB 9D                       	popf
+   681                                  
+   682 000006AC C3                       	ret
+   683                                   
+   684                                   ;----------------------------------------------------
+   685                                  dmphexold:		;dump memory, syntax: call dmphex with rsi as begin and rdi as end address
+   686                                  ;----------------------------------------------------
+   687                                  
+   688                                  
+   689 000006AD 50                      	push rax
+   690 000006AE 53                      	push rbx
+   691 000006AF 51                      	push rcx
+   692 000006B0 52                      	push rdx
+   693 000006B1 57                      	push rdi
+   694 000006B2 56                      	push rsi
+   695                                  	
+   696 000006B3 FC                      	cld		;mov the table to bss
+   697 000006B4 B955000000              	mov ecx, 85
+   698 000006B9 BE[9C010000]            	mov esi, aHxDmp
+   699 000006BE BF[00000000]            	mov edi, sOutDmp
+   700 000006C3 F3A4                    	rep movsb
+   701                                  
+   702                                  dmphex1:
+   703 000006C5 8B442404                	mov	eax, [rsp+4]
+   704 000006C9 BF08000000              	mov	edi,8
+   705 000006CE E8F1010000              	call	inthex		; dmp high address
+   706 000006D3 8B0424                  	mov	eax, [rsp]
+   707 000006D6 BF11000000              	mov	edi,17
+   708 000006DB E8E4010000              	call	inthex		; low address
+   709                                  
+   710 000006E0 488B3C24                	mov	rdi, [rsp]	; first 8 bytes
+   711 000006E4 488B07                  	mov	rax, [rdi]
+   712 000006E7 BF14000000              	mov	edi,20
+   713 000006EC E8F5010000              	call	b8hex
+   714 000006F1 488B3C24                	mov	rdi, [rsp]	; next 8 bytes
+   715 000006F5 488B4708                	mov	rax, [rdi+8]
+   716 000006F9 BF2C000000              	mov	edi,44
+   717 000006FE E8E3010000              	call	b8hex
+   718                                  
+   719 00000703 488B3C24                	mov	rdi, [rsp]	; first 8 bytes
+   720 00000707 488B07                  	mov	rax, [rdi]
+   721 0000070A BF43000000              	mov	edi,67
+   722 0000070F E813020000              	call	b8chr
+   723 00000714 488B3C24                	mov	rdi, [rsp]	; next 8 bytes
+   724 00000718 488B4708                	mov	rax, [rdi+8]
+   725 0000071C BF4C000000              	mov	edi,76
+   726 00000721 E801020000              	call	b8chr
+   727                                  
+   728                                  dmphex2:
+   729 00000726 B801000000              	mov rax, 1	; 1 = write
+   730 0000072B BF01000000              	mov rdi, 1	; 1 = to stdout
+   731 00000730 48BE-                   	mov rsi, sOutDmp	; string to display in rsi
+   731 00000732 [0000000000000000] 
+   732 0000073A BA55000000              	mov rdx, 85	; length of the string
+   733 0000073F 4153                    	push r11
+   734 00000741 0F05                    	syscall
+   735 00000743 415B                    	pop r11	; display the string
+   736                                  	
+   737 00000745 58                      	pop	rax	; pop start address
+   738 00000746 4883C010                	add	rax, 16
+   739 0000074A 50                      	push	rax
+   740 0000074B 483B442408              	cmp	rax, [rsp+8]	; cmp to end address
+   741 00000750 0F826FFFFFFF            	jb	dmphex1
+   742                                  
+   743 00000756 5E                      	pop rsi
+   744 00000757 5F                      	pop rdi
+   745 00000758 5A                      	pop rdx
+   746 00000759 59                      	pop rcx
+   747 0000075A 5B                      	pop rbx
+   748 0000075B 58                      	pop rax
+   749 0000075C C3                      	ret
+   750                                   ;----------------------------------------------------
+   751                                   ;	<dmpreg> dump registers	
+   752                                   ;----------------------------------------------------
+   753                                  dmpreg:
+   754 0000075D 9C                      	pushfq			;68 64 position on stack later
+   755                                  
+   756 0000075E 54                      	push	rsp		;60 56
+   757 0000075F 55                      	push	rbp		;52 48
+   758 00000760 56                      	push	rsi		;44 40
+   759 00000761 57                      	push	rdi		;36 32
+   760                                  
+   761 00000762 50                      	push	rax		;28 24
+   762 00000763 53                      	push	rbx		;20 16
+   763 00000764 51                      	push	rcx		;12 8
+   764 00000765 52                      	push	rdx		;4  0
+   765                                  
+   766 00000766 FC                      	cld			;mov the table to bss
+   767 00000767 B960010000              	mov ecx, 352
+   768 0000076C BE[3C000000]            	mov esi, acDsp
+   769 00000771 BF[00000000]            	mov edi, sOutDmp
+   770 00000776 F3A4                    	rep movsb
+   771                                  
+   772 00000778 8B44241C                	mov eax, [rsp+28]	;get rax Upper Half
+   773 0000077C BF0C000000              		mov edi, 12
+   774 00000781 E83E010000              		call	inthex
+   775 00000786 8B442418                		mov eax, [rsp+24]	;get rax LH
+   776 0000078A BF15000000              		mov edi, 21
+   777 0000078F E830010000              		call	inthex
+   778                                  		
+   779 00000794 8B442414                	mov eax, [rsp+20]	;get rbx Upper Half
+   780 00000798 BF22000000              		mov edi, 34
+   781 0000079D E822010000              		call	inthex
+   782 000007A2 8B442410                		mov eax, [rsp+16]	;get rbx LH
+   783 000007A6 BF2B000000              		mov edi, 43
+   784 000007AB E814010000              		call	inthex
+   785                                  		 
+   786 000007B0 8B44240C                	mov eax, [rsp+12]	;get rcx Upper Half
+   787 000007B4 BF38000000              		mov edi, 56
+   788 000007B9 E806010000              		call	inthex
+   789 000007BE 8B442408                		mov eax, [rsp+8]	;get rcx LH
+   790 000007C2 BF41000000              		mov edi, 65
+   791 000007C7 E8F8000000              		call	inthex
+   792                                  		
+   793 000007CC 8B442404                	mov eax, [rsp+4]	;get rdx Upper Half
+   794 000007D0 BF4E000000              		mov edi, 78
+   795 000007D5 E8EA000000              		call	inthex
+   796 000007DA 8B0424                  		mov eax, [rsp+0]	;get rdx LH
+   797 000007DD BF57000000              		mov edi, 87
+   798 000007E2 E8DD000000              		call	inthex
+   799                                  			
+   800 000007E7 8B44243C                	mov eax, [rsp+60]	;get rsp Upper Half
+   801 000007EB BF64000000              		mov edi, 100
+   802 000007F0 E8CF000000              		call	inthex
+   803 000007F5 8B442438                		mov eax, [rsp+56]	;get rsp LH
+   804 000007F9 BF6D000000              		mov edi, 109
+   805 000007FE E8C1000000              		call	inthex
+   806                                  		
+   807 00000803 8B442434                	mov eax, [rsp+52]	;get rbp Upper Half
+   808 00000807 BF7A000000              		mov edi, 122
+   809 0000080C E8B3000000              		call	inthex
+   810 00000811 8B442430                		mov eax, [rsp+48]	;get rbp LH
+   811 00000815 BF83000000              		mov edi, 131
+   812 0000081A E8A5000000              		call	inthex
+   813                                  		 
+   814 0000081F 8B44242C                	mov eax, [rsp+44]	;get rsi Upper Half
+   815 00000823 BF90000000              		mov edi, 144
+   816 00000828 E897000000              		call	inthex
+   817 0000082D 8B442428                		mov eax, [rsp+40]	;get rsi LH
+   818 00000831 BF99000000              		mov edi, 153
+   819 00000836 E889000000              		call	inthex
+   820                                  		
+   821 0000083B 8B442424                	mov eax, [rsp+36]	;get rdi Upper Half
+   822 0000083F BFA6000000              		mov edi, 166
+   823 00000844 E87B000000              		call	inthex
+   824 00000849 8B442420                		mov eax, [rsp+32]	;get rdi LH
+   825 0000084D BFAF000000              		mov edi, 175
+   826 00000852 E86D000000              		call	inthex
+   827                                   
+   828 00000857 8B442444                 	mov eax, [rsp+68]	;get eflg 16 bit upper
+   829 0000085B BFC5000000              		mov edi, 197
+   830 00000860 E8E9000000              		call	intbin
+   831 00000865 8B442440                		mov eax, [rsp+64]	;get eflg LH
+   832 00000869 BFD6000000              		mov edi, 214
+   833 0000086E E8DB000000              		call	intbin
+   834                                  
+   835 00000873 8B44244C                 	mov eax, [rsp+76]	;Looks from the return address available
+   836 00000877 BFE8000000              		mov edi, 232		
+   837 0000087C E843000000              		call	inthex
+   838 00000881 8B442448                		mov eax, [rsp+72]	;get rip LH
+   839 00000885 BFF1000000              		mov edi, 241
+   840 0000088A E835000000              		call	inthex
+   841                                   
+   842 0000088F B801000000              	mov rax, 1	; 1 = write
+   843 00000894 BF01000000              	mov rdi, 1	; 1 = to stdout
+   844 00000899 48BE-                   	mov rsi, sOutDmp	; string to display in rsi
+   844 0000089B [0000000000000000] 
+   845 000008A3 BA60010000              	mov rdx, 352	; length of the string, without 0
+   846 000008A8 4153                    	push r11
+   847 000008AA 0F05                    	syscall
+   848 000008AC 415B                    	pop r11	; display the string
+   849                                  	
+   850 000008AE 5A                      		pop	 rdx		;restore registers
+   851 000008AF 59                      		pop	 rcx
+   852 000008B0 5B                      		pop	 rbx
+   853 000008B1 58                      		pop	 rax
+   854                                  
+   855 000008B2 5F                      		pop	 rdi
+   856 000008B3 5E                      		pop	 rsi
+   857 000008B4 5D                      		pop	 rbp
+   858 000008B5 5C                      		pop	 rsp
+   859                                  
+   860 000008B6 9D                      		popfq
+   861                                  
+   862 000008B7 C3                      		ret
+   863                                  		
+   864                                  
+   865                                  	
+   866                                  ;--------------------------------------
+   867                                  quit:
+   868                                  tmpend:
+   869 000008B8 B83C000000              	mov rax, 60	; 60 = exit
+   870 000008BD BF00000000              	mov rdi, 0	; 0 = success exit code
+   871 000008C2 0F05                    	syscall	; quit
+   872                                  
+   873                                  ;--------------------------------------------
+   874 000008C4 66B90800                inthex: mov cx , 8		; convert eax into hex 
+   875 000008C8 89C6                    inthex1:mov esi, eax		; in1: eax, so 4 bytes, 8
+   876 000008CA 83E60F                  	and esi, 0xF		; take lower significant nibble
+   877 000008CD 678ABE[00000000]        	mov BH, [aiHex + esi]
+   878 000008D4 C1E804                  	shr eax, 4		; mov to higer significant niblle
+   879 000008D7 FFCF                    	dec edi			; decrement next store location,
+   880 000008D9 66FFC9                  	dec cx			; so lower memory but higher significance.
+   881 000008DC 6788BF[00000000]        	mov [sOutDmp + edi], BH	; the hex digits are stored at [sOutDmp+edi]
+   882 000008E3 75E3                    	jnz	inthex1
+   883 000008E5 C3                      	ret
+   884                                  ;--------------------------------------------
+   885 000008E6 66B90800                b8hex:	mov cx , 8		;convert rax into 8 bytes hex string starting at rdi separted by space
+   886 000008EA 4889C6                  b8hex1: mov rsi, rax
+   887 000008ED 4883E60F                	and rsi, 0xF
+   888 000008F1 8ABE[00000000]          	mov BH, [aiHex + rsi]
+   889 000008F7 48C1E804                	shr rax, 4
+   890 000008FB 88BF[00000000]          	mov [sOutDmp + rdi], BH
+   891 00000901 48FFC7                  	inc rdi
+   892                                  
+   893 00000904 4889C6                  	mov rsi, rax
+   894 00000907 4883E60F                	and rsi, 0xF
+   895 0000090B 8ABE[00000000]          	mov BH, [aiHex + rsi]
+   896 00000911 48C1E804                	shr rax, 4
+   897 00000915 88BF[FEFFFFFF]          	mov [sOutDmp + rdi-2], BH	
+   898 0000091B 48FFC7                  	inc rdi
+   899 0000091E 48FFC7                  	inc rdi
+   900 00000921 66FFC9                  	dec cx
+   901 00000924 75C4                    	jnz  b8hex1
+   902                                  
+   903 00000926 C3                      	ret
+   904                                  ;--------------------------------------------
+   905 00000927 66B90800                b8chr:	mov cx , 8		;convert rax into 8 bytes to printable char else dot starting at rdi 
+   906 0000092B 88C3                    b8chr1: mov bl, al
+   907 0000092D 80FB20                  	cmp bl,0x20
+   908 00000930 7205                    	jb  b8chr2
+   909 00000932 80FB80                  	cmp bl,0x80
+   910 00000935 7202                    	jb b8chr3
+   911 00000937 B32E                    b8chr2: mov bl,0x2E
+   912 00000939 889F[00000000]          b8chr3: mov [sOutDmp +rdi],bl
+   913 0000093F 66FFC9                  	dec cx
+   914 00000942 7409                    	jz  b8chr4
+   915 00000944 48FFC7                  	inc rdi
+   916 00000947 48C1E808                	shr rax,8
+   917 0000094B EBDE                    	jmp b8chr1
+   918 0000094D C3                      b8chr4: ret
+   919                                  ;--------------------------------------------	
+   920 0000094E 66B91000                intbin: mov cx , 16		;convert eax into bin string ending at edi
+   921 00000952 89C6                    intbin1:mov esi, eax
+   922 00000954 83E601                  	and esi, 0x1
+   923 00000957 678ABE[00000000]        	mov BH, [aiHex + esi]
+   924 0000095E D1E8                    	shr eax, 1
+   925 00000960 FFCF                    	dec edi
+   926 00000962 66FFC9                  	dec cx
+   927 00000965 6788BF[00000000]        	mov [sOutDmp + edi], BH
+   928 0000096C 75E4                    	jnz	intbin1
+   929 0000096E C3                      	ret
+   930                                  
+   931                                  ;--------------------------------------------------------------	
+   932                                  section .data	; for debugger
+   933                                  ;--------------------------------------------------------------
+   934 00000000 303132333435363738-     aiHex:	db	"0123456789ABCDEF"
+   934 00000009 39414243444546     
+   935                                  
+   936 00000010 7261783A3031323334-     aDspRax: db	"rax:01234567 01234567", 0x0A
+   936 00000019 353637203031323334-
+   936 00000022 3536370A           
+   937 00000026 7263783A3031323334-     aDspRcx: db	"rcx:01234567 01234567", 0x0A
+   937 0000002F 353637203031323334-
+   937 00000038 3536370A           
+   938                                  
+   939 0000003C 7261783A3132333435-     acDsp:	db	"rax:12345678 12345678 rbx:12345678 12345678 rcx:12345678 12345678 rdx:12345678 12345678", 0x0A; 88
+   939 00000045 363738203132333435-
+   939 0000004E 363738207262783A31-
+   939 00000057 323334353637382031-
+   939 00000060 323334353637382072-
+   939 00000069 63783A313233343536-
+   939 00000072 373820313233343536-
+   939 0000007B 3738207264783A3132-
+   939 00000084 333435363738203132-
+   939 0000008D 3334353637380A     
+   940 00000094 7273703A3132333435-     	db	"rsp:12345678 12345678 rbp:12345678 12345678 rsi:12345678 12345678 rdi:12345678 12345678", 0x0A; 88
+   940 0000009D 363738203132333435-
+   940 000000A6 363738207262703A31-
+   940 000000AF 323334353637382031-
+   940 000000B8 323334353637382072-
+   940 000000C1 73693A313233343536-
+   940 000000CA 373820313233343536-
+   940 000000D3 3738207264693A3132-
+   940 000000DC 333435363738203132-
+   940 000000E5 3334353637380A     
+   941 000000EC 65666C673A31323334-     	db	"eflg:1234567812345678 1234567812345678      rip:12345678 12345678                      ", 0x0A; 88
+   941 000000F5 353637383132333435-
+   941 000000FE 363738203132333435-
+   941 00000107 363738313233343536-
+   941 00000110 373820202020202072-
+   941 00000119 69703A313233343536-
+   941 00000122 373820313233343536-
+   941 0000012B 373820202020202020-
+   941 00000134 202020202020202020-
+   941 0000013D 2020202020200A     
+   942 00000144 202020202020202020-     	db	"             --dpfavr -nlpoditsz-a-p-c                                                 ", 0x0A; 88
+   942 0000014D 202020202D2D647066-
+   942 00000156 617672202D6E6C706F-
+   942 0000015F 646974737A2D612D70-
+   942 00000168 2D6320202020202020-
+   942 00000171 202020202020202020-
+   942 0000017A 202020202020202020-
+   942 00000183 202020202020202020-
+   942 0000018C 202020202020202020-
+   942 00000195 2020202020200A     
+   943                                  		;123456789012345678901234567890123456789012345678901234567890123456789012345678901234567
+   944                                  		;         10        20        30        40        50        60        70        80        total 352
+   945                                  
+   946 0000019C 303132333435363720-     aHxDmp: db	"01234567 01234567: 01 23 45 67 01 23 45 67-01 23 45 67 01 23 45 67 01234567-01234567", 0x0A;
+   946 000001A5 30313233343536373A-
+   946 000001AE 203031203233203435-
+   946 000001B7 203637203031203233-
+   946 000001C0 2034352036372D3031-
+   946 000001C9 203233203435203637-
+   946 000001D2 203031203233203435-
+   946 000001DB 203637203031323334-
+   946 000001E4 3536372D3031323334-
+   946 000001ED 3536370A           
+   947                                  		;123456789012345678901234567890123456789012345678901234567890123456789012345678901234567
+   948                                  
+   949                                  ;--------------------------------------------------------------
+   950                                  section .bss	; for debugger
+   951                                  ;--------------------------------------------------------------
+   952                                  
+   953 00000000 <res 160h>              sOutDmp:	resb 352
+   954                                  
