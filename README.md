@@ -27,11 +27,11 @@ Mapping the alternatives to separate output can be expressed as:
   
 Exception handling becomes obvious:
 
-	rule =	"Hello", pOut(“Hey hello! How are you?”)|
+	rule =	"Hello", pOut(“Hey hello! How are you?”) |
  
-		"Hallo", pOut(“He! Hoe gaat het met je?”|
+		"Hallo", pOut(“He! Hoe gaat het met je?”) |
   
-		{b},	  pOut(“Scusi, non ho capito!”;
+		{b},	 pOut(“Scusi, non ho capito!”)    ;
   
 Here {b}, flushes all input and the system will generate the remark it did not understand the input.
 
