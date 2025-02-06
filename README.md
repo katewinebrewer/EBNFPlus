@@ -40,4 +40,4 @@ EBNFplus supports the standard syntax elements, while the semantic can be expres
 The EBNFplus helps solutions for a large class of mapping chalenges from simple to complex. Typical applications include translators (such as between Infix and Postfix expressions, hex tables and binary formats, IFSF binary payment protocols to man-readable formats), filters (e.g. for finding telephone numbers, email addresses, card iso numbers), converters (e.g. between data sets in CSV, XML, Json and Yaml), interfaces  (e.g. Web/API servers and clients), and compilers (e.g. is itself! EBNFPlus to assembly).
 
 ## Examples
-An ISO8583 interpreter that converst biniary to json file: https://github.com/katewinebrewer/8583-bin-to-json-convertor
+An ISO8583 interpreter that converts binary to json file: https://github.com/katewinebrewer/8583-bin-to-json-convertor.
