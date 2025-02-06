@@ -38,3 +38,6 @@ Here {b}, flushes all input and the system will generate the remark it did not u
 EBNFplus supports the standard syntax elements, while the semantic can be expressed by EBNFPlus functions including the host language, that is the language to which EBNFPlus sources are cross compiled to (e.g. x64 assembly in the current version, but GO and VBA versions also exist).
 
 The EBNFplus helps solutions for a large class of mapping chalenges from simple to complex. Typical applications include translators (such as between Infix and Postfix expressions, hex tables and binary formats, IFSF binary payment protocols to man-readable formats), filters (e.g. for finding telephone numbers, email addresses, card iso numbers), converters (e.g. between data sets in CSV, XML, Json and Yaml), interfaces  (e.g. Web/API servers and clients), and compilers (e.g. is itself! EBNFPlus to assembly).
+
+## Examples
+An ISO8583 interpreter that converst biniary to json file: https://github.com/katewinebrewer/8583-bin-to-json-convertor
