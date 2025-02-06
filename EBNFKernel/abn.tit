@@ -1,0 +1,16 @@
+a	; a = "A".."Z"| "a".."z";	alfabetic
+   Calls.
+
+b	; b = ^0..^255;		byte
+   Calls.
+
+n	; n = "0".."9"		numeric digit
+   Calls.
+
+sIFSF	; sIFSF = "="|"?"|"_";	special sign in IFSF
+   Calls.
+
+LIValMax	; use in bnf:	~(v)
+ 		; do:	If integer value of LI > v then rPOK=F else rPOK=T
+   Calls: Dec2Bin.
+

@@ -1,0 +1,346 @@
+;xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+; 			     EBNF Kernel
+;xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+; 210801 V0.1	1st stable version
+; 220127 V0.2	added: hex input;
+;		fixed: label duplication in ebnf Factor
+; 		changed: all .bss variables to rbp area
+;		changed: file load, parse and save process from asm to EBNF
+;		changed: file load and save by heap
+;		added; identifier/integer lists allowed as function argument
+; 220205 V0.3	changed: removed spearate context stack, now on machine stack
+; 220207 V0.4	changed: comment symbols to /* and */ conform C-comments
+;		changed: implicit address to explicit address using "*"
+; 		added: Postfix function calls: argument then function
+;		added: pOutPIn for previous input next to last input
+; 220216 V0.5	added: list arguments of mixed integer, identifier and addreses
+; 220406 V0.6	added: (h,h) functional rule
+; 220420 V0.7	added: common memory mngmnt using mmap for both main and threads
+;		changed: support stacked parameters for functions (with except
+;		list for primary functions for speed)
+; 220516 V0.8	changed: specific file load/save to F2M, M2M
+; 220802 V0.9	fixed: pOK = true immediate after '|'
+;		added: pHIi, pOutHIi, pHILeni, where i= 0..4
+;		added: ** for factor construct <stacked variable> ** (expr)
+; 220829 V0.10	fixed: rEndFlg reset at concatenation
+; 220917 V0.11	added sOut, sLeft , sCutRight
+; 221016 V0.12	added Bin4Dec, sPushA, Unix and Ecma time
+; 240320 V0.13	fixed and streamlined abn primitives; renamed M2M to I2O,
+;		F2M to F2I, M2F to O2F; added O2I; added module IP.
+;		Added ServerRecv and ServerSend	
+; 240527 v0.14	Added sKeyIn, removed Heap module, removed functional
+;		rules, corrected MemUnmap
+;xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+; 				EXTERNALS
+;xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+main	; EBNF+ start process
+	Calls: Message, ChipInfo, MemMap, Rum.
+
+Quit	; EBNF+ end process
+	Calls: Message, syscall.
+
+MemMap	; request system to allocate memory of size Len somewhere (OS choice)
+	; in: rsi = Len
+	; out: rax = Add0
+	; used: rdi, rdx, r10,r8, r9, rax, rbx
+	Calls: syscall.
+
+MemUnmap	; returns memory allocated by MemMap back to system
+	; in: rdi = Add0, rsi = Len
+	; out: rax = Errno
+	; used: rbx, rcx, r11
+	Calls: syscall.
+
+ChipInfo	; Display if cpu supports AVX, VAES, VPCLMUL, FMA and SHA
+	Calls: Message, ChipDetect.
+
+CLArg1	; ~() rdx
+	; out:	rsi = address 1st command line argument delimited db 0x0
+	Calls.
+
+CLArg	; ~(rdx)rsi
+	; out:	rsi = address of command (rdx=0) or its rdx_th argument (rdx>0)
+	;	delimited by db 0x0
+	; 	rdx is limited to mod 8
+	Calls: ErrorMessage.
+
+sCLArg	; ~(i) s
+	; in:	i index
+	; out:	s string
+	; do:	return s which equals the ith argument in the command line,
+	; 	where 0 returns the command, 1 the first argument etc.
+	Calls: CLArg.
+
+sLI	; ~() s
+	; put on stack last parsed string
+	Calls.
+
+sConcat; ~(s1,s2) s3
+	; do: replace s1 and s2 with s3 = s1 & s2, all on stack
+	; legenda: *=address, A=8 byte aligned, l = length
+	;	   BOS bottum of stack (1st unused in high mem)
+	;	   TOS top of stack; (latest stacked in low mem)
+	Calls.
+
+DropLastChar
+	; Drop the last character from object
+	Calls.
+
+sI2HS	; Convert the 64b integer on stack into 4 hex characters (Little Endian)
+	; in: 	db xx, xx, dd, dd, dd, zz, zz, zz ; where dd = dont care, zz=0x0
+	; out:	db 04, hh, hh, hh, hh, zz, zz, zz ; where hh is in xx in hex format
+	Calls.
+
+sLeft	; (s1,n)s2    leave on stack s2 = the n left side characters of s1
+	Calls.
+
+sCutRight	; (s1,n) s2    leave on stack s2 = s1 cut with n bytes right
+	Calls.
+
+sOut	; (s)   append s1 to sOut
+	Calls.
+
+sDrop	; (s)
+	; do:	drop last string on stack
+	; uses:	rax, rdx
+	Calls.
+
+sDup	; (s)s,s
+	; do:	duplicate string on stack
+	; uses:	rdx, rax, rdi, rsi
+	Calls.
+
+sKeyIn	; push on stack the string keyed in until closed by a return
+	; in:	void
+	; out:	string on stack (mod 8 alligned, LSB in low mem)
+	;	delimited with 0x0 byte, return not included
+	;	max len = 254
+	; ass:	rsp0 mod 8 = 0
+	; 	[rspEnd] = length byte of string
+	;	rsp0-100h is within allowed memory space
+	; prop:	rsp mod 8 = 0
+	;	allwed empty string to return
+	; used:	rax, rbx, rcx=1, rdx=0x100, rsi, rdi.
+	; todo: what if typed string len is >255? 
+	Calls: syscall.
+
+IsNotDef	; IsNotDef (Is the last parsed string Not already Defined?)
+	; Since this requires check through all sofar compiled code it is made primitive
+	; Implementation: Search (from Out0 to rOutPnt) for the text:
+	; 	<LastIn> ws "=", where ws is {0x00 to 0x0d}*.
+	Calls.
+
+sMessage
+	; Display stacked string
+	; on stack byte order: n, c1, c2, .. cn, 0, .. 0.
+	; 	where n is string length
+	;	must be delimited by at least one zero
+	Calls: syscall.
+
+Message	; Display inline string
+	; inline argument: bOffset, String
+	; Example:	call Message
+	;		 db 4, "test"
+	Calls: syscall.
+
+MessageMem
+	; Display string in memory
+	;	in:	rsi=*msg, rdx=len(msg)
+	;	lost:	rax, rdi
+	Calls: syscall.
+
+ErrorMessage
+	; Display inline string as error message, dspebnf and quit 
+	; Example	call ErrorMessage
+	;		 db 7, "Pardon?"
+	Calls: Message, dmpreg, dmprex, syscall, dmphexold, dmphexrsi.
+
+MsgLI	; Displays LI
+	Calls: syscall.
+
+DspLstTrm
+	; Display last compiled non terminal. Used in EBNF grammar
+	Calls: syscall, Message.
+
+iRandom		; push on stack hardware generated random 64 bit value  
+	Calls.
+
+WaitSecond	; waits n seconds in it's thread, then continues
+	; eg. usage in bnf:	WaitSecond (60)
+	; this compiles to:	push 60
+	;			call WaitSecond
+	Calls: syscall.
+
+GetTime
+	; Get current UTC in Ecma format "20YY-MM-DD HH:mm:ss.sss"
+	; Out: updated string at EcmaTime.
+	; uses var in .bss: SecTime, NanTime, ScrapTime; in .data: EcmaTime
+	Calls: syscall, ErrorMessage, Bin2Dec, Bin4Dec.
+
+pIn	; Parse string at InPnt if it matches sTerm
+	; The string argument is just behind the call:
+	;	e.g.  call pIn
+	;		db 5, "sTerm"
+	Calls.
+
+pInterval	; OK 200821
+	; Parses byte at InPnt
+	; The string argument is just behind the call:
+	;	e.g.  call pInterval
+	;		db "a", "z"
+	; Operands are only as byte allowed. So 2 bytes after call
+	; this must be enforced by compiler
+	Calls.
+
+pIntervalQuad
+	; Parses 8 byte string at InPnt if it false in byte range
+	; The string argument is just behind the call:
+	;	e.g.  call pInterval
+	;		dq 0x12345678 , 0x9abcdef0
+	; Operands are only as quad allowed. So 16 bytes after call
+	; this must be be enforced by compiler
+	Calls.
+
+pFindIn
+	; finds a string beyond InPnt
+	; The string argument is inline coded
+	;	e.g.  call pFindIn
+	;		db 10, "first find"
+	; When found, InPnt points to the find (not behind the find!)
+	Calls.
+
+cAndProlog	;Concord function will reparse LastIn 
+	Calls.
+
+cAndEpilog		; same as cDrop
+;--------------------------------------------------------
+	Calls.
+
+sPush	; ~(s_inline_code) S		only on asm level
+	; Do: Put inline string on stack (add ending 08 or 00)
+	; Eg: Call sPush
+	;	db "5. ".txt"
+	; not yet to be used in bnf level, maybe add to exception list as sOut
+	Calls.
+
+sPushA	; ~(a)s	Push addressed string alligned on stack				; todo merge with sCLArg in Kernel
+	; In:	address on stack
+	; Out:	string found at address. (string ends with zero byte)
+	; used:	rax, rbx, rdx, rdi, rsi
+	Calls.
+
+pOut	; Append inline string to Out.
+	; Examples:	call pOut
+	;		 db 6, "Hello!"
+	; In EBNF: 	pOut("Hello!"), pOut("Hi ","there")
+	; Note:	pOut(sVariablename) is not allowed!
+	Calls: ErrorMessage.
+
+pOutLI	; Append last parsed string to Out.
+	Calls.
+
+pOutLILen	; Append length of last parsed string to Out.
+	; The length is in hex format
+	Calls: Bin2Hex.
+
+pOutPILen	; Append length of last parsed string to Out.
+	; The length is in hex format
+	Calls: Bin2Hex.
+
+pOutPI	; Append last parsed string to Out
+	Calls.
+
+pHI0	; Hold last parsed string in vault 0
+	; Each thread may reference up to 6 strings.
+	Calls: Bin2Hex.
+
+pHI1	; Hold last parsed string in vault 1
+	Calls: Bin2Hex.
+
+pHI2	; Hold last parsed string in vault 2
+	Calls: Bin2Hex.
+
+pHI3	; Hold last parsed string in vault 3
+	Calls: Bin2Hex.
+
+pHI4	; Hold last parsed string in vault 4
+	Calls: Bin2Hex.
+
+pHI5	; Hold last parsed string in vault 5
+	Calls: Bin2Hex.
+
+pOLIT3			; no rest
+	Calls.
+
+pOLIT2 		; all were 0! (or string was empty, then strange)
+	Calls.
+
+pOutInPnt	; used by tls to append to sOut the binary pointer pIntPnt
+		; as quad
+	Calls.
+
+pOutLILenByte	; used by tls to append to sOut the binary length of last in
+		; as byte
+	Calls.
+
+Bin1Hex; convert 1 byte binary to hex (2 byte).
+	; in: al byte, rdi = address for output
+	; out: hex digit at [rdi]
+	; uses: aiHex (array), rax, rbx, rsi
+	Calls.
+
+Bin2Hex
+	; convert 2 bytes binary to 4 char hex string
+	; in: ax (ah=MSByte, al=LSByte), rdi = add for output
+	; out: at [rdi]; MS hex digit at lowest mem
+	Calls.
+
+BinNHex	; in:	on stack: X= Bin value, N =1..16 number of Hex chars
+		; do: 	cvt Bin to Hex format with N chars in Out
+		; out:  appended to Out the N chars long Hex format in GE
+		;	If too small pad left with "0" 
+		; 	If too long drop MS part
+		;	Hex uses uppercase ("A" to "F")
+	Calls.
+
+Bin2Dec	; convert one byte value to decimal bcd unpacked
+	; in:	rax (< 0x100)
+	; out:	at [rdi] in GE, at [rdi +4] in LE order
+	; uses:	rbx, rsi
+	Calls.
+
+Bin4Dec	; in:	rax=X binary value 4 byte LSB, MSB is ingored,
+		; do: 	cvt X to decimal value in N=10 ascii digits format at rdi
+		; out:  append to [rdi] the N digit value of X
+		;	pad left with "0" if too small
+		; 	truncate left if too big
+	Calls.
+
+BinNDec	; in:	on stack: X binary value 8 bytes, N=number of digits
+		; do: 	cvt X to decimal value in N decimal digits (=N chars)
+		; out:  append to Out the N decimal digits value of X
+		;	If to small padded left with "0" 
+		; 	If to big truncated left (MS part)
+	Calls.
+
+Dec2Bin
+	; Decimal ascii (at rLastIN) to binary (in rax)
+	; msb to lsb
+	; in: rLastIn, rLastinLen
+	; out: rax = 8b binary value of ascii decimals at rLastIn
+	; uses: rdi, rsi, rdx, rax, rbx, rcx=1
+	Calls: ErrorMessage.
+
+Hex2Bin
+	; convert 2 hex ascii digits to bin value
+	; in: ax with ah = MSDigit, al = LSDigit
+	; out: al
+	Calls: ErrorMessage.
+
+dspebnf	; dspebnf shows the status of the EBNF parser.
+	Calls: Message.
+
+dspeb4					; display sIn + sInPnt position
+	Calls: dmphexrsi, Message, dsprex, syscall.
+

@@ -1,0 +1,3042 @@
+     1                                  ;xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+     2                                  ; 			     EBNF Kernel
+     3                                  ;xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+     4                                  ; 210801 V0.1	1st stable version
+     5                                  ; 220127 V0.2	added: hex input;
+     6                                  ;		fixed: label duplication in ebnf Factor
+     7                                  ; 		changed: all .bss variables to rbp area
+     8                                  ;		changed: file load, parse and save process from asm to EBNF
+     9                                  ;		changed: file load and save by heap
+    10                                  ;		added; identifier/integer lists allowed as function argument
+    11                                  ; 220205 V0.3	changed: removed spearate context stack, now on machine stack
+    12                                  ; 220207 V0.4	changed: comment symbols to /* and */ conform C-comments
+    13                                  ;		changed: implicit address to explicit address using "*"
+    14                                  ; 		added: Postfix function calls: argument then function
+    15                                  ;		added: pOutPIn for previous input next to last input
+    16                                  ; 220216 V0.5	added: list arguments of mixed integer, identifier and addreses
+    17                                  ; 220406 V0.6	added: (h,h) functional rule
+    18                                  ; 220420 V0.7	added: common memory mngmnt using mmap for both main and threads
+    19                                  ;		changed: support stacked parameters for functions (with except
+    20                                  ;		list for primary functions for speed)
+    21                                  ; 220516 V0.8	changed: specific file load/save to F2M, M2M
+    22                                  ; 220802 V0.9	fixed: pOK = true immediate after '|'
+    23                                  ;		added: pHIi, pOutHIi, pHILeni, where i= 0..4
+    24                                  ;		added: ** for factor construct <stacked variable> ** (expr)
+    25                                  ; 220829 V0.10	fixed: rEndFlg reset at concatenation
+    26                                  ; 220917 V0.11	added sOut, sLeft , sCutRight
+    27                                  ; 221016 V0.12	added Bin4Dec, sPushA, Unix and Ecma time
+    28                                  ; 240320 V0.13	fixed and streamlined abn primitives; renamed M2M to I2O,
+    29                                  ;		F2M to F2I, M2F to O2F; added O2I; added module IP.
+    30                                  ;		Added ServerRecv and ServerSend	
+    31                                  ; 240527 v0.14	Added sKeyIn, removed Heap module, removed functional
+    32                                  ;		rules, corrected MemUnmap
+    33                                  ;xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    34                                  ; 				EXTERNALS
+    35                                  ;xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    36                                  
+    37                                  GLOBAL main
+    38                                  
+    39                                  ;******************************************************* Application **********
+    40                                  EXTERN Rum
+    41                                  
+    42                                  ;******************************************************* EBNFKernel  **********
+    43                                  GLOBAL CLArg
+    44                                  GLOBAL sOut, sPush, sPushA, sCLArg, sConcat, sLI, sMessage, sI2HS
+    45                                  GLOBAL sLeft, sCutRight, sDrop, sDup, sKeyIn
+    46                                  GLOBAL MemMap, MemUnmap
+    47                                  
+    48                                  GLOBAL pIn, pInterval, pIntervalQuad, pFindIn
+    49                                  GLOBAL cPush, cPop, cTop, cAndProlog, cAndEpilog, cDrop, cDropExcept
+    50                                  
+    51                                  GLOBAL DropLastChar, IsNotDef
+    52                                  
+    53                                  GLOBAL cOpenTextGram, cCloseTextGram
+    54                                  GLOBAL cOpenH2HGram, cCloseH2HGram
+    55                                  
+    56                                  GLOBAL lClear, LblNew, LblUse, LblCls, LblPush, LblTop, LblDrop, pOutLbl
+    57                                  GLOBAL SDIdStart, SDIdOper, SDIdEnd
+    58                                  
+    59                                  GLOBAL pOut, pOutCr
+    60                                  
+    61                                  GLOBAL pOutLI, pOutLILen
+    62                                  GLOBAL pOutPI, pOutPILen
+    63                                  GLOBAL pOutHI0, pOutHILen0, pHI0
+    64                                  GLOBAL pOutHI1, pOutHILen1, pHI1
+    65                                  GLOBAL pOutHI2, pOutHILen2, pHI2
+    66                                  GLOBAL pOutHI3, pOutHILen3, pHI3
+    67                                  GLOBAL pOutHI4, pOutHILen4, pHI4
+    68                                  GLOBAL pOutHI5, pOutHILen5, pHI5, sHI5
+    69                                  
+    70                                  GLOBAL pOutLIHex, pOutLIHex2Bin
+    71                                  GLOBAL pOutLITrim, pOutLIdpTrim
+    72                                  GLOBAL pOutInPnt, pOutLILenByte
+    73                                  
+    74                                  GLOBAL OutSrcLin
+    75                                  
+    76                                  GLOBAL DspLstTrm, MsgLI, MessageMem, Message, ErrorMessage, Quit, dspebnf
+    77                                  
+    78                                  GLOBAL Bin2Dec, Bin4Dec, BinNDec, Bin1Hex, Bin2Hex, BinNHex, Dec2Bin, Hex2Bin
+    79                                  
+    80                                  GLOBAL WaitSecond, EcmaTime, IMFTime, GetTime
+    81                                  GLOBAL iRandom
+    82                                  
+    83                                  GLOBAL mRSP
+    84                                  
+    85                                  GLOBAL F2M, E2M, M2M, EOF, M2F
+    86                                  GLOBAL F2I, F2O, F2OAppend
+    87                                  GLOBAL E2O, I2O, O2I, O2F
+    88                                  GLOBAL a, b, n, sIFSF
+    89                                  
+    90                                  ;xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    91                                  ;				VARIABLES
+    92                                  ;xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    93                                  
+    94                                  section .bss
+    95                                  
+    96 00000000 ????????????????        mRSP:	resq 1	; rsp of OS given stack. EBNF main and threads have own stack.
+    97 00000008 ????????????????        iArg:	resq 1
+    98 00000010 ????????????????        pArg:	resq 1
+    99                                  
+   100                                  
+   101                                  ;xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+   102                                  ;				MAIN
+   103                                  ;xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+   104                                  section .text
+   105                                  
+   106                                  %include "../EBNF/EBNFix.asm"
+   107                              <1> ;*******************************************************************************
+   108                              <1> ; EBNFix shares pointers, variables, subroutine names with grammars and
+   109                              <1> ; applications to link with the Kernel.
+   110                              <1> ; This file should be included in a new grammar definition, eg. 
+   111                              <1> ; a new compiler, interpreter or convertor.
+   112                              <1> 
+   113                              <1> ; Have after the GLOBAL declarations in the App the line: 
+   114                              <1> ;	"%include "../EBNF/EBNFix.asm"
+   115                              <1> ; When in reversed order double definition errors will result.
+   116                              <1> 
+   117                              <1> ;*******************************************************************************
+   118                              <1> ;				MEMORY MAP
+   119                              <1> ;*******************************************************************************
+   120                              <1> ; for server
+   121                              <1> sMemL	equ	0x4000000	; 64MB total space 
+   122                              <1> sMemBL	equ	0x100		; 256B base length
+   123                              <1> sMemSL	equ	0x800		;   2k stack length
+   124                              <1> 
+   125                              <1> ; for each thread
+   126                              <1> tMemL	equ	0x0800000	;  8MB total space
+   127                              <1> tMemBL	equ	0x100		; 256B base length
+   128                              <1> tMemSL	equ	0x800		;   2k stack length
+   129                              <1> 
+   130                              <1> ;*******************************************************************************
+   131                              <1> ;				CONTEXT PARAMETERS
+   132                              <1> ;*******************************************************************************
+   133                              <1> ; in registers
+   134                              <1> %define rPOk		rcx	; flag 1=match 0=no match during parse
+   135                              <1> %define rInPnt		r8	; moving pointer in sIn to continue parse 
+   136                              <1> %define rInEnd		r9	; flag if no further parse input available
+   137                              <1> %define rOutPnt		r10	; moving pointer to append in sOut
+   138                              <1> %define rLastIn		r11	; last term that matched in parse 
+   139                              <1> %define rLastInLen	r12	; length of LastIn
+   140                              <1> %define rFactCnt	r13	; index during factoring
+   141                              <1> %define rInEndFlg	r14	; end of Input message
+   142                              <1> %define rInChrCnt	r15	; character counter during text parsing
+   143                              <1> 
+   144                              <1> ; memory available per thread (each thread has privat rbp area)
+   145                              <1> %define mMemEnd		rbp		; end of thread Mem
+   146                              <1> %define mMem0		qword [rbp-  8]	; start of Mem
+   147                              <1> 
+   148                              <1> ; for EBNF parser in thread memory
+   149                              <1> %define In0		[rbp- 16]	; start of In
+   150                              <1> %define InPntMax	[rbp- 24]	; Pnt furthest parsed before mismatch
+   151                              <1> %define InPntOld	[rbp- 32]	; Used for display parsed terminal
+   152                              <1> %define InPrev		[rbp- 40]	; 
+   153                              <1> %define InPrevLen	[rbp- 48]	; 
+   154                              <1> %define OutEnd		[rbp- 56]	; end of out going msg
+   155                              <1> %define Out0		[rbp- 64]	; start of out going msg
+   156                              <1> %define OutBufEnd	[rbp- 72]	; end of space avail for outgoing msg
+   157                              <1> %define LblNxtNew	[rbp- 80]	;
+   158                              <1> 
+   159                              <1> %define SockFD		[rbp- 88]	; one thread max one Socket (for now)
+   160                              <1> %define MasterSockFD	[rbp- 96]	; socket to whch thread msgs are swtched
+   161                              <1> 
+   162                              <1> 
+   163                              <1> %define Tmp0		qword [rbp-104]	; general purpose var, ok for threading
+   164                              <1> %define Tmp1		qword [rbp-112]
+   165                              <1> %define Tmp2		qword [rbp-120]
+   166                              <1> %define Tmp3		qword [rbp-128]
+   167                              <1> 
+   168                              <1> %define InHold0		qword [rbp-136]	; todo: replace InPrev with InHold, remove automatic update of InPrev during context save/restore (used in Functions.
+   169                              <1> %define InHoldLen0	qword [rbp-144]
+   170                              <1> %define InHold1		qword [rbp-152]
+   171                              <1> %define InHoldLen1	qword [rbp-160]
+   172                              <1> %define InHold2		qword [rbp-168]
+   173                              <1> %define InHoldLen2	qword [rbp-176]
+   174                              <1> %define InHold3		qword [rbp-184]	
+   175                              <1> %define InHoldLen3	qword [rbp-192]
+   176                              <1> %define InHold4		qword [rbp-200]	
+   177                              <1> %define InHoldLen4	qword [rbp-208]
+   178                              <1> %define InHold5		qword [rbp-216]	
+   179                              <1> %define InHoldLen5	qword [rbp-224]
+   180                              <1> 
+   181                              <1> ; threading return stack
+   182                              <1> %define mAddQuit	[rbp-tMemBL-8]	; BOS	= [rbp-248] (see line 16)
+   183                              <1> %define mAddThread	[rbp-tMemBL-16]	; 	= [rbp-256] (see line 16)			; check not tested yet!!!!
+   184                              <1> 
+   185                              <1> 
+   186                              <1> ;******************************************************* Application **********
+   187                              <1> EXTERN Rum
+   188                              <1> 
+   189                              <1> ;******************************************************* EBNFKernel  **********
+   190                              <1> EXTERN CLArg
+   191                              <1> EXTERN sOut, sPush, sPushA, sCLArg, sConcat, sLI, sMessage, sI2HS
+   192                              <1> EXTERN sLeft, sCutRight, sDrop, sDup, sKeyIn
+   193                              <1> EXTERN mRSP
+   194                              <1> EXTERN MemMap, MemUnmap
+   195                              <1> 
+   196                              <1> EXTERN InFile, OutFile
+   197                              <1> EXTERN EOF
+   198                              <1> EXTERN F2I, E2O, I2O, O2F, O2I, F2O, F2OAppend	; from X2X.asm
+   199                              <1> EXTERN a, b, n, sIFSF				; from abn.asm
+   200                              <1> EXTERN LILenMax, LIValMax
+   201                              <1> 
+   202                              <1> EXTERN pIn, pInterval, pIntervalQuad, pFindIn
+   203                              <1> EXTERN cPush, cPop, cTop, cAndProlog, cAndEpilog, cDrop, cDropExcept
+   204                              <1> EXTERN DropLastChar, IsNotDef
+   205                              <1> 
+   206                              <1> EXTERN cOpenTextGram, cCloseTextGram
+   207                              <1> EXTERN cOpenH2HGram, cCloseH2HGram
+   208                              <1> 
+   209                              <1> EXTERN lClear, LblNew, LblUse, LblCls, LblPush, LblTop, LblDrop, pOutLbl
+   210                              <1> 
+   211                              <1> EXTERN SDIdStart, SDIdOper, SDIdEnd
+   212                              <1> EXTERN pOut, pOutCr,  pOutLIHex, pOutLIHex2Bin, pOutLITrim, pOutLIdpTrim
+   213                              <1> 
+   214                              <1> EXTERN pOutLI, pOutLILen
+   215                              <1> EXTERN pPI, pOutPI, pOutPILen
+   216                              <1> 
+   217                              <1> EXTERN pHI0, pOutHI0, pOutHILen0
+   218                              <1> EXTERN pHI1, pOutHI1, pOutHILen1
+   219                              <1> EXTERN pHI2, pOutHI2, pOutHILen2
+   220                              <1> EXTERN pHI3, pOutHI3, pOutHILen3
+   221                              <1> EXTERN pHI4, pOutHI4, pOutHILen4
+   222                              <1> EXTERN pHI5, pOutHI5, pOutHILen5, sHI5
+   223                              <1> 
+   224                              <1> EXTERN OutSrcLin
+   225                              <1> EXTERN pOutInPnt, pOutLILenByte
+   226                              <1> EXTERN DspLstTrm, MsgLI, Message, MessageMem, ErrorMessage, Quit
+   227                              <1> EXTERN Bin2Dec, Bin4Dec, BinNDec, Bin1Hex, Bin2Hex, BinNHex, Dec2Bin, Hex2Bin
+   228                              <1> EXTERN WaitSecond, EcmaTime, IMFTime, GetTime
+   229                              <1> EXTERN iRandom
+   230                              <1> 
+   231                              <1> EXTERN dspebnf
+   232                              <1> 
+   233                              <1> ;***************************************************** Heap.asm ***************
+   234                              <1> EXTERN hClear, hOpen, hAdd, hClose, hCap, hGC
+   235                              <1> EXTERN HeapPnt, Heap0, HeapEnd
+   236                              <1> EXTERN dspheap
+   237                              <1> ;***************************************************** Thread.asm *************
+   238                              <1> Extern Thread, wQuit
+   239                              <1> ;***************************************************** IP.asm *****************
+   240                              <1> Extern ServerSockOpen, ServerSockClose
+   241                              <1> Extern ClientSockOpen, ClientSockClose
+   242                              <1> Extern S2I, O2S
+   243                              <1> Extern dmpin, dmpout, dspin, dspout, dspfd, dspwmem
+   244                              <1> ;***************************************************** DES.asm ****************
+   245                              <1> EXTERN DES, GenEncKeys, GenDecKeys
+   246                              <1> EXTERN SwapKeySet, DupKeySet, DropKeySet
+   247                              <1> ;***************************************************** Dir.asm ****************
+   248                              <1> EXTERN pOutDir
+   249                              <1> 
+   250                              <1> ;***************************************************** DebugTools.asm *********
+   251                              <1> EXTERN dspreg, dsprex, dspxmm, dspymm
+   252                              <1> EXTERN dmphex, dmpreg, dmprex, dmpxmm, dmpymm
+   253                              <1> EXTERN dmphexrsi, dmphex10, dmphexold
+   254                              <1> EXTERN msg, quit
+   255                              <1> 
+   256                              <1> 
+   107                                  %include "../EBNFKernel/abn.asm"
+   108                              <1> 
+   109                              <1> ;******************************************************************************
+   110                              <1> ;			Data Primitives
+   111                              <1> ; EBNF terminals that ar coded directly into assembly for fast execution.
+   112                              <1> ; Version 0.1	220807
+   113                              <1> ; Version 0.2	240323	2x faster: removed cpush and cdrop
+   114                              <1> ; Supports:
+   115                              <1> ;	a	= "A".."Z"| "a".."z";	alfabetic
+   116                              <1> ;	b	= ^0..^255;		byte
+   117                              <1> ;	n	= "0".."9";		numeric digit
+   118                              <1> ;	sIFSF	= "="| "?"| "_";	special character ifsf (s is taken by nasm)
+   119                              <1> 
+   120                              <1> GLOBAL a, b, n, sIFSF
+   121                              <1> GLOBAL LILENMax, LIVALMax
+   122                              <1> ;******************************************************************************
+   123                              <1> 
+   124                              <1> a:	; a = "A".."Z"| "a".."z";	alfabetic
+   125                              <1> 
+   126 00000000 418A00              <1> 	mov al, [rInPnt]
+   127 00000003 3C41                <1> 	cmp al, 0x41	; "A"
+   128 00000005 720C                <1> 	jb .aNOk
+   129 00000007 3C7A                <1> 	cmp al, 0x7A	; "z"
+   130 00000009 7708                <1> 	ja .aNOk
+   131 0000000B 3C5A                <1> 	cmp al, 0x5A	; "Z"
+   132 0000000D 7608                <1> 	jbe b
+   133 0000000F 3C61                <1> 	cmp al, 0x61	; "a"
+   134 00000011 7304                <1> 	jae b
+   135                              <1> 	
+   136 00000013 4831C9              <1> .aNOk:	xor rPOk, rPOk
+   137 00000016 C3                  <1> 	ret
+   138                              <1> ;--------------------------------------
+   139                              <1> 
+   140                              <1> b:	; b = ^0..^255;		byte
+   141                              <1> 
+   142 00000017 4831C9              <1> 	xor rPOk, rPOk
+   143 0000001A 4D39C8              <1> 	cmp rInPnt, rInEnd	; InPnt at end parsed text? rPok = false!
+   144 0000001D 7318                <1> 	jae .bEnd
+   145                              <1> 	
+   146 0000001F 48FFC1              <1> 	inc rPOk
+   147 00000022 4C8945E8            <1> 	mov InPntMax, rInPnt
+   148 00000026 4D89C3              <1> 	mov rLastIn, rInPnt
+   149 00000029 4989CC              <1> 	mov rLastInLen, rPOk
+   150 0000002C 49FFC0              <1> 	inc rInPnt
+   151 0000002F 4D39C8              <1> 	cmp rInPnt, rInEnd	; InPnt at end parsed text?
+   152 00000032 7203                <1> 	jb .bEnd
+   153                              <1> 	
+   154 00000034 49FFC6              <1> 	inc rInEndFlg
+   155 00000037 C3                  <1> .bEnd:	ret
+   156                              <1> ;--------------------------------------
+   157                              <1> 
+   158                              <1> n:	; n = "0".."9"		numeric digit
+   159                              <1> 
+   160 00000038 418A00              <1> 	mov al, [rInPnt]
+   161 0000003B 3C30                <1> 	cmp al, 0x30	; "0"
+   162 0000003D 7204                <1> 	jb .nNOk
+   163 0000003F 3C39                <1> 	cmp al, 0x39	; "9"
+   164 00000041 76D4                <1> 	jbe b
+   165                              <1> 
+   166 00000043 4831C9              <1> .nNOk:	xor rPOk, rPOk
+   167 00000046 C3                  <1> 	ret
+   168                              <1> ;--------------------------------------
+   169                              <1> 
+   170                              <1> sIFSF:	; sIFSF = "="|"?"|"_";	special sign in IFSF
+   171                              <1> 
+   172 00000047 418A00              <1> 	mov al, [rInPnt]
+   173 0000004A 3C3D                <1> 	cmp al, "="
+   174 0000004C 74C9                <1> 	je b			; can also call .nOk and skip .sOk
+   175 0000004E 3C3F                <1> 	cmp al, "?"
+   176 00000050 74C5                <1> 	je b
+   177 00000052 3C5F                <1> 	cmp al, "_"
+   178 00000054 74C1                <1> 	je b
+   179                              <1> 
+   180 00000056 4831C9              <1> 	xor rPOk, rPOk
+   181 00000059 C3                  <1> 	ret
+   182                              <1> ;--------------------------------------
+   183                              <1> 
+   184                              <1>  LILenMax:	; use in bnf: ~(m)
+   185                              <1>  		; do:	If length of LI > m then rPOK=F else rPOK=T
+   186 0000005A 5B                  <1>  	pop rbx
+   187 0000005B 58                  <1>  	pop rax
+   188 0000005C 4831C9              <1>  	xor rcx, rcx
+   189 0000005F 4939C4              <1>  	cmp rLastInLen, rax
+   190 00000062 7703                <1>  	ja .LILM
+   191 00000064 48FFC1              <1>  	inc rcx
+   192 00000067 FFE3                <1>  .LILM:	jmp rbx
+   193                              <1>  	
+   194                              <1> LIValMax:	; use in bnf:	~(v)
+   195                              <1>  		; do:	If integer value of LI > v then rPOK=F else rPOK=T
+   196 00000069 E81E150000          <1> 	call Dec2Bin		; integer value of decimal LI
+   197 0000006E 5B                  <1> 	pop rbx
+   198 0000006F 5A                  <1> 	pop rdx
+   199 00000070 4831C9              <1>  	xor rcx, rcx
+   200 00000073 4839D0              <1>  	cmp rax, rdx
+   201 00000076 7703                <1>  	ja .LIVM
+   202 00000078 48FFC1              <1>  	inc rcx
+   203 0000007B FFE3                <1>  .LIVM:	jmp rbx
+   204                              <1> 	
+   205                              <1> 	
+   206                              <1> 	
+   207                              <1> 	
+   208                              <1> 	
+   209                              <1> 	
+   108                                  %include "../EBNFKernel/X2X.asm"
+   109                              <1> ;******************************************************************************
+   110                              <1> ; X2X.asm interfaces the file system with the parser.
+   111                              <1> ; Example code: .. F2I ("hi.bnf"), I2O(*Grammar), O2F ("hi.asm") .. loads the
+   112                              <1> ; file "hi.bnf", parses it as by Grammar def. and saves result in "hi.asm".
+   113                              <1> ; Process:       load          parse        save
+   114                              <1> ;	 -----    F2I   -----   I2O   -----  O2F      -----
+   115                              <1> ;     input file --o-->  sIn   --o-->  sOut --o--> output file
+   116                              <1> ;	 -----	        -----         -----           -----
+   117                              <1> ;		    In0..rInEnd      Out0..
+   118                              <1> ;		    rInPnt-->	     rOutPnt--> (grows maximal to OutBufEnd)
+   119                              <1> ; Note: IP.asm interfaces the network with the parser using S2I, O2S and alike.
+   120                              <1> ;******************************************************************************
+   121                              <1> 
+   122                              <1> F2I:	; File to Memory
+   123                              <1> 	; use:	~ (sFPN)
+   124                              <1> 	; do:	1. open file, named sFpn
+   125                              <1> 	; 	2. read into memory starting at In0
+   126                              <1> 	;	3. when done, set rInEnd
+   127                              <1> 	;	4. close file.
+   128                              <1> 
+   129                              <1> ; 1. open file
+   130 0000007D 5B                  <1> 	pop rbx			; 4ret
+   131 0000007E 488D7C2401          <1> 	lea rdi, [rsp+1]	; rdi = *fpn 4sys_open
+   132 00000083 BE02000000          <1> 	mov rsi, 2		; 2 = O_RDWR
+   133 00000088 4889F0              <1> 	mov rax, rsi		; 2 = SYS_OPEN
+   134 0000008B 0F05                <1> 	 syscall		; rax = fd
+   135 0000008D 4809C0              <1> 	or rax, rax
+   136 00000090 7D18                <1> 	jge .dr1
+   137 00000092 E83A080000          <1> 	   call ErrorMessage
+   138 00000097 12496E707574206669- <1> 	   db 18, "Input file unknown"
+   138 000000A0 6C6520756E6B6E6F77- <1>
+   138 000000A9 6E                  <1>
+   139                              <1> 	.dr1:
+   140 000000AA 4831C9              <1> 	xor rcx, rcx		; remove sFpn from stack
+   141 000000AD 8A0C24              <1> 	mov cl, [rsp]
+   142 000000B0 48FFC1              <1> 	inc rcx
+   143 000000B3 48C1E903            <1> 	shr rcx, 3
+   144 000000B7 48FFC1              <1> 	inc rcx
+   145 000000BA 48C1E103            <1> 	shl rcx, 3		; ax = ((dx+1)/8+1)*8 = ALen
+   146 000000BE 4801CC              <1> 	add rsp, rcx
+   147                              <1> 
+   148                              <1> ; 2. read file starting at In0
+   149 000000C1 4889C7              <1> 	mov rdi, rax		; fd 4sys
+   150 000000C4 488B75F0            <1> 	mov rsi, In0		; start add for load
+   151 000000C8 488B55B8            <1> 	mov rdx, OutBufEnd
+   152 000000CC 4829F2              <1> 	sub rdx, rsi		; max len 4sys
+   153 000000CF 4831C0              <1> 	xor rax, rax		; 0=sys_read
+   154                              <1> 				; rdi,  rsi, rdx
+   155                              <1> 				;  fd, *buf, len
+   156 000000D2 0F05                <1> 	 syscall      		; rax = InLen, rdi = fd
+   157 000000D4 4809C0              <1> 	or rax, rax
+   158 000000D7 7D1C                <1> 	jge .dr2
+   159 000000D9 E8F3070000          <1> 	   call ErrorMessage
+   160 000000DE 1643616E6E6F742072- <1> 	   db 22, "Cannot read input file"
+   160 000000E7 65616420696E707574- <1>
+   160 000000F0 2066696C65          <1>
+   161                              <1> 	.dr2:	
+   162 000000F5 4839C2              <1> 	cmp rdx, rax		; rdx=avail rax=actual
+   163 000000F8 7F1E                <1> 	jg .dr3
+   164 000000FA E8D2070000          <1> 	   call ErrorMessage
+   165 000000FF 184E6F206D656D6F72- <1> 	   db 24, "No memory for input file"
+   165 00000108 7920666F7220696E70- <1>
+   165 00000111 75742066696C65      <1>
+   166                              <1> 	.dr3:
+   167                              <1> 
+   168                              <1> ; 3. set rInEnd
+   169 00000118 4801F0              <1> 	add rax, rsi		; rax := rsi+rax= In0+Len = rInEnd
+   170 0000011B 4989C1              <1> 	mov rInEnd, rax
+   171 0000011E 4C8B45F0            <1> 	mov rInPnt, In0
+   172                              <1> ; 4. Close file
+   173 00000122 B803000000          <1> 	mov rax, 3		; 3=sysclose
+   174                              <1> 				; rdi.
+   175                              <1> 				;  fd.
+   176 00000127 0F05                <1> 	 syscall
+   177 00000129 4809C0              <1> 	or rax, rax
+   178 0000012C 7D1D                <1> 	jge .dr4
+   179 0000012E E89E070000          <1> 	   call ErrorMessage
+   180 00000133 1743616E6E6F742063- <1> 	   db 23, "Cannot close input file"
+   180 0000013C 6C6F736520696E7075- <1>
+   180 00000145 742066696C65        <1>
+   181                              <1> 	.dr4:
+   182 0000014B 4831C9              <1> 	xor rcx, rcx
+   183 0000014E 48FFC1              <1> 	inc rcx
+   184 00000151 FFE3                <1> 	jmp rbx
+   185                              <1> 
+   186                              <1> ;******************************************************************************
+   187                              <1> E2O:	; Empty to Memory, for creating only output without input.
+   188                              <1> 	; use:	~(*function)
+   189                              <1> 	; do:	Start function for output without source for parsing
+   190                              <1> 	;	Output starts at Out0 and ends at rOutPnt
+   191                              <1> 	;	No parse possible since sIn is empty
+   192                              <1> 	
+   193 00000153 4C8B4DF0            <1> 	mov rInEnd, In0		; Rest same as I2O
+   194                              <1> ;------------------------------------------------------------------------------
+   195                              <1> I2O:	; In to Out, maps sIn to sOut as defined by grammar.
+   196                              <1> 	; use:	~(*grammar) 	memory grows from Out0 to rOutPnt
+   197                              <1> 	; do:	1. start grammar any out put starts from Out0
+   198                              <1> 	; 	2. When all parsed, set OutEnd.
+   199                              <1> 	; pOK is NOK if sIn is not parssed fine till end
+   200 00000157 5A                  <1> 	pop rdx			; 4ret
+   201 00000158 5B                  <1> 	pop rbx			; rbx = *Grammar
+   202 00000159 52                  <1> 	push rdx
+   203                              <1> 
+   204                              <1> ; 1. set up memory for grammar start and output
+   205 0000015A 4831C9              <1> 	xor rcx, rcx
+   206 0000015D 4C8B45F0            <1> 	mov rInPnt,	In0
+   207 00000161 4C894DC0            <1> 	mov Out0,	rInEnd
+   208 00000165 4D89CA              <1> 	mov rOutPnt,	rInEnd
+   209 00000168 4D89C3              <1> 	mov rLastIn,	rInPnt		; LastIn string still empty
+   210 0000016B 4989CC              <1>  	mov rLastInLen, rcx		; =0
+   211 0000016E 4C8945E8            <1> 	mov InPntMax,	rInPnt		; not much success sofar
+   212 00000172 4C8945E0            <1> 	mov InPntOld,	rInPnt
+   213 00000176 4C8945D8            <1> 	mov InPrev,	rInPnt
+   214 0000017A 48894DD0            <1> 	mov InPrevLen, rcx
+   215 0000017E 48894DB0            <1> 	mov LblNxtNew, rcx
+   216 00000182 4989CD              <1> 	mov rFactCnt, rcx
+   217 00000185 4989CF              <1> 	mov rInChrCnt, rcx
+   218 00000188 4989CE              <1> 	mov rInEndFlg, rcx
+   219 0000018B 48FFC1              <1> 	inc rcx				; rcx = rPOk = TRUE
+   220                              <1> 
+   221 0000018E FFD3                <1> 	call rbx
+   222                              <1> 	
+   223 00000190 4C8955C8            <1> 	mov OutEnd, rOutPnt
+   224                              <1> 
+   225 00000194 4831C9              <1> EOF:	xor rcx, rcx			; if end then conform grammar
+   226 00000197 4D39C8              <1> 	cmp rInPnt, rInEnd		; over the edge of sIn?
+   227 0000019A 7C03                <1> 	jl .eof1
+   228                              <1> 
+   229 0000019C 48FFC1              <1> 	inc rcx
+   230 0000019F C3                  <1> .eof1:	ret
+   231                              <1> ;******************************************************************************
+   232                              <1> O2F:	; Out to File
+   233                              <1> 	; use:	~(sFPN)		memory use is implicit from Out0.. rOutPnt
+   234                              <1> 	; Do:	1. create file (overwrite previous file if there)
+   235                              <1> 	;	2. write file content Out0 to OutEnd.
+   236                              <1> 	
+   237                              <1> ; 1. create file
+   238 000001A0 5B                  <1> 	pop rbx
+   239 000001A1 488D7C2401          <1> 	lea rdi, [rsp+1]	; rdi = *fpn 4sys_open
+   240 000001A6 BEB6010000          <1> 	mov rsi, 666q		; 2 = O_RDWR
+   241 000001AB B855000000          <1> 	mov rax, 85		; 2 = SYS_OPEN
+   242 000001B0 0F05                <1> 	 syscall		; rax = fd
+   243 000001B2 4809C0              <1> 	or rax, rax
+   244 000001B5 7D18                <1> 	jge .m2f1
+   245 000001B7 E815070000          <1> 	   call ErrorMessage
+   246 000001BC 1243616E6E6F742063- <1> 	   db 18, "Cannot create file"
+   246 000001C5 72656174652066696C- <1>
+   246 000001CE 65                  <1>
+   247                              <1> 	   .m2f1:
+   248 000001CF 4831C9              <1> 	xor rcx, rcx		; remove sFPN from stack
+   249 000001D2 8A0C24              <1> 	mov cl, [rsp]
+   250 000001D5 48FFC1              <1> 	inc rcx
+   251 000001D8 48C1E903            <1> 	shr rcx, 3
+   252 000001DC 48FFC1              <1> 	inc rcx
+   253 000001DF 48C1E103            <1> 	shl rcx, 3		; ax = ((dx+1)/8+1)*8 = ALen
+   254 000001E3 4801CC              <1> 	add rsp, rcx
+   255                              <1> ; 2. write file
+   256 000001E6 4889C7              <1> 	mov rdi, rax
+   257 000001E9 488B75C0            <1> 	mov rsi, Out0
+   258 000001ED 4C89D2              <1> 	mov rdx, rOutPnt	; OutEnd probably no need for
+   259 000001F0 4829F2              <1> 	sub rdx, rsi		; rdx=length of Out
+   260 000001F3 B801000000          <1> 	mov rax, 1		; 1=SYS_WRITE
+   261 000001F8 0F05                <1> 	 syscall
+   262 000001FA 4809C0              <1> 	or rax, rax
+   263 000001FD 7D16                <1> 	jge .m2f2
+   264 000001FF E8CD060000          <1> 	   call ErrorMessage
+   265 00000204 1043616E6E6F742073- <1> 	   db 16, "Cannot save file"
+   265 0000020D 6176652066696C65    <1>
+   266                              <1> 	   .m2f2:
+   267                              <1> ; 3. close file
+   268 00000215 B803000000          <1> 	mov rax, sys_close	; =3, rdi contains fd already
+   269 0000021A 0F05                <1> 	 syscall
+   270 0000021C 4809C0              <1> 	or rax, rax
+   271 0000021F 7D1D                <1> 	jge .m2f3
+   272 00000221 E8AB060000          <1> 	   call ErrorMessage
+   273 00000226 1743616E6E6F742063- <1> 	   db 23, "Cannot close saved file"
+   273 0000022F 6C6F73652073617665- <1>
+   273 00000238 642066696C65        <1>
+   274                              <1> 	   .m2f3:
+   275 0000023E 4831C9              <1> 	xor rcx, rcx
+   276 00000241 48FFC1              <1> 	inc rcx
+   277 00000244 FFE3                <1> 	jmp rbx
+   278                              <1> 
+   279                              <1> ;******************************************************************************
+   280                              <1> O2I:	; Output to In, so copy sOut to sIn, reset context to parse sIn
+   281                              <1> 	; use:	~()
+   282                              <1> 	; do:	copy Out to In. Based on In0 and length_of_Out (=rOutpnt-Out0)
+   283                              <1> 	;	set rInPnt, rInEnd, Out0 (=rInEnd) and rOutPnt (=rInEnd)
+   284                              <1> 	;	resets context overriding the previous context inc pOK.
+   285 00000246 4C89D1              <1> 	mov rcx, rOutPnt
+   286 00000249 482B4DC0            <1> 	sub rcx, Out0			; rcx = length of buf to copy
+   287                              <1> 	
+   288 0000024D 488B75C0            <1> 	mov rsi, Out0
+   289 00000251 488B7DF0            <1> 	mov rdi, In0
+   290 00000255 4989F8              <1> 	mov rInPnt, rdi
+   291 00000258 E314                <1> 	jrcxz .o2i1			; if nothing to copy no mov to do
+   292                              <1> 
+   293 0000025A FC                  <1> 	cld
+   294 0000025B F3A4                <1> 	rep movsb
+   295 0000025D 4989F9              <1> 	mov rInEnd, rdi
+   296 00000260 48897DC0            <1> 	mov Out0, rdi
+   297 00000264 4989FA              <1> 	mov rOutPnt, rdi
+   298 00000267 4989CE              <1> 	mov rInEndFlg, rcx
+   299 0000026A 48FFC1              <1> 	inc rcx
+   300 0000026D C3                  <1> 	ret
+   301                              <1> 
+   302 0000026E 4831C9              <1> .o2i1:	xor rcx, rcx
+   303 00000271 48FFC1              <1> 	inc rcx				; set rOK		
+   304 00000274 4989CE              <1> 	mov rInEndFlg, rcx		; set rInEndFlg (end reached)	
+   305 00000277 4989F9              <1> 	mov rInEnd, rdi			; rInEnd=In0
+   306 0000027A 48897DC0            <1> 	mov Out0, rdi
+   307 0000027E 4989FA              <1> 	mov rOutPnt, rdi
+   308 00000281 C3                  <1> 	ret
+   309                              <1> ;******************************************************************************
+   310                              <1> F2O:	; File to Output, overwrite existing sOut
+   311                              <1> 	; use:	~(sFpn)
+   312                              <1> 	; do:	load file at Out0    (so renews Out)
+   313 00000282 4C8B55C0            <1> 	mov rOutPnt, Out0
+   314                              <1> 				; rest same as F2OAppend
+   315                              <1> ;------------------------------------------------------------------------------
+   316                              <1> F2OAppend:	; File to Output, append to existing sOut)
+   317                              <1> 	; use:	~(sFpn),	
+   318                              <1> 	; do:	1. open file, named sFpn
+   319                              <1> 	; 	2. read into memory starting at Out0
+   320                              <1> 	;	3. when done, set OutEnd
+   321                              <1> 	;	4. close file.
+   322                              <1> 
+   323                              <1> ; 1. open file
+   324 00000286 5B                  <1> 	pop rbx			; 4ret
+   325 00000287 488D7C2401          <1> 	lea rdi, [rsp+1]	; rdi = *fpn 4sys_open
+   326 0000028C BE02000000          <1> 	mov rsi, 2		; 2 = O_RDWR
+   327 00000291 4889F0              <1> 	mov rax, rsi		; 2 = SYS_OPEN
+   328 00000294 4153                <1> 	push r11
+   329 00000296 0F05                <1> 	 syscall		; rax = fd
+   330 00000298 415B                <1> 	pop r11
+   331 0000029A 4809C0              <1> 	or rax, rax
+   332 0000029D 0F8CAD000000        <1> 	jl .f2Err		; db 18, "Input file unknown"
+   333                              <1> 	
+   334 000002A3 4831C9              <1> 	xor rcx, rcx		; remove sFpn from stack
+   335 000002A6 8A0C24              <1> 	mov cl, [rsp]
+   336 000002A9 48FFC1              <1> 	inc rcx
+   337 000002AC 48C1E903            <1> 	shr rcx, 3
+   338 000002B0 48FFC1              <1> 	inc rcx
+   339 000002B3 48C1E103            <1> 	shl rcx, 3		; ax = ((dx+1)/8+1)*8 = ALen
+   340 000002B7 4801CC              <1> 	add rsp, rcx
+   341                              <1> 
+   342                              <1> ; 2. read file			Set In0, rInPnt, rInEnd, Out0, rOutPnt
+   343 000002BA 4889C7              <1> 	mov rdi, rax		; fd 4sys
+   344 000002BD 4C89D6              <1> 	mov rsi, rOutPnt	; start add for load
+   345 000002C0 488B55B8            <1> 	mov rdx, OutBufEnd
+   346 000002C4 4829F2              <1> 	sub rdx, rsi		; max len 4sys
+   347 000002C7 4831C0              <1> 	xor rax, rax		; 0=sys_read
+   348                              <1> 				; rdi,  rsi, rdx
+   349                              <1> 				;  fd, *buf, len
+   350 000002CA 4153                <1> 	push r11
+   351 000002CC 0F05                <1> 	 syscall      		; rax = InLen, rdi = fd
+   352 000002CE 4809C0              <1> 	or rax, rax
+   353 000002D1 7D1C                <1> 	jge .dr2
+   354 000002D3 E8F9050000          <1> 	   call ErrorMessage
+   355 000002D8 1643616E6E6F742072- <1> 	   db 22, "Cannot read input file"
+   355 000002E1 65616420696E707574- <1>
+   355 000002EA 2066696C65          <1>
+   356                              <1> 	.dr2:	
+   357 000002EF 4839C2              <1> 	cmp rdx, rax		; rdx=avail rax=actual
+   358 000002F2 7D22                <1> 	jge .dr3
+   359 000002F4 E8D8050000          <1> 	   call ErrorMessage
+   360 000002F9 184F7574206F66206D- <1> 	   db 24, "Out of memory for input file"
+   360 00000302 656D6F727920666F72- <1>
+   360 0000030B 20696E707574206669- <1>
+   360 00000314 6C65                <1>
+   361                              <1> 	.dr3:
+   362                              <1> 
+   363                              <1> ; 3. set OutEnd
+   364 00000316 480345C0            <1> 	add rax, Out0		; =rsi?
+   365 0000031A 488945C8            <1> 	mov OutEnd, rax
+   366 0000031E 4989C2              <1> 	mov rOutPnt, rax
+   367                              <1> ; 4. Close file
+   368 00000321 B803000000          <1> 	mov rax, 3		; 3=sysclose
+   369                              <1> 				; rdi.
+   370                              <1> 				;  fd.
+   371 00000326 0F05                <1> 	 syscall
+   372 00000328 415B                <1> 	pop r11
+   373 0000032A 4809C0              <1> 	or rax, rax
+   374 0000032D 7D19                <1> 	jge .dr4
+   375 0000032F E89D050000          <1> 	   call ErrorMessage
+   376 00000334 1343616E6E6F742063- <1> 	   db 19, "Cannot close InFile"
+   376 0000033D 6C6F736520496E4669- <1>
+   376 00000346 6C65                <1>
+   377                              <1> 	.dr4:
+   378 00000348 4831C9              <1> 	xor rcx, rcx
+   379 0000034B 48FFC1              <1> 	inc rcx
+   380 0000034E FFE3                <1> 	jmp rbx
+   381                              <1> 	
+   382                              <1> .f2Err:				; in case file unknown then flag NOK
+   383 00000350 4831C9              <1> 	xor rcx, rcx
+   384 00000353 8A0C24              <1> 	mov cl, [rsp]
+   385 00000356 48FFC1              <1> 	inc rcx
+   386 00000359 48C1E903            <1> 	shr rcx, 3
+   387 0000035D 48FFC1              <1> 	inc rcx
+   388 00000360 48C1E103            <1> 	shl rcx, 3
+   389 00000364 4801CC              <1> 	add rsp, rcx
+   390 00000367 4831C9              <1> 	xor rcx, rcx
+   391 0000036A FFE3                <1> 	jmp rbx
+   392                              <1> 
+   393                              <1> 
+   109                                  
+   110                                  main:	; EBNF+ start process
+   111                                  
+   112                                  ; 1. save parameters in CLI
+   113 0000036C 48893C25[08000000]      	mov [iArg], rdi
+   114 00000374 48893425[10000000]      	mov [pArg], rsi
+   115                                  ; 2. save rbp as by convention
+   116 0000037C 55                      	push rbp
+   117 0000037D 48892425[00000000]      	mov [mRSP], rsp
+   118                                  ; 3. show starting
+   119 00000385 E804050000              	call Message
+   120 0000038A 320B3C45424E462056-      	 db 50, 11, "<EBNF Version 0.14 (c) 2021..2024 Hans Wijnands>", 10
+   120 00000393 657273696F6E20302E-
+   120 0000039C 313420286329203230-
+   120 000003A5 32312E2E3230323420-
+   120 000003AE 48616E732057696A6E-
+   120 000003B7 616E64733E0A       
+   121 000003BD E8A5000000               	call ChipInfo
+   122                                  ; 4. Get a memory block.	 	Set mMem0, rbp, rsp.
+   123 000003C2 BE00000004              	mov rsi, sMemL			; Ask OS for memory of length sMemL
+   124 000003C7 E86C000000              	call MemMap			; rax = bottom of block
+   125 000003CC 4889C5                  	mov rbp, rax
+   126 000003CF 4801F5                  	add rbp, rsi
+   127 000003D2 488DA500FFFFFF          	lea rsp,[rbp-sMemBL]
+   128 000003D9 488945F8                	mov mMem0, rax
+   129                                  
+   130                                  ; 5. setup EBNF parameters		set start (In0) and I/O space available
+   131 000003DD 488945F0                	mov In0, rax
+   132 000003E1 4989C0                  	mov rInPnt,  rax
+   133 000003E4 4989C1                  	mov rInEnd,  rax
+   134 000003E7 4989C2                  	mov rOutPnt, rax
+   135 000003EA 4989C3                  	mov rLastIn, rax
+   136                                  	
+   137 000003ED 4831C9                  	xor rcx, rcx
+   138 000003F0 4989CC                  	mov rLastInLen, rcx
+   139 000003F3 4989CD                  	mov rFactCnt,   rcx
+   140 000003F6 4989CE                  	mov rInEndFlg,  rcx
+   141 000003F9 4989CF                  	mov rInChrCnt,  rcx
+   142 000003FC 48FFC1                  	inc rcx			; pOK=True
+   143                                  
+   144 000003FF 488965B8                	mov OutBufEnd, rsp
+   145 00000403 48816DB800080000        	sub qword OutBufEnd, sMemSL 	; keep safe distant from rsp area
+   146                                  ; 6. Start parse as by user spec
+   147 0000040B E8(00000000)             	call Rum
+   148                                  ; 7. Assume a return from user
+   149 00000410 488B7DF8                	mov rdi, mMem0
+   150                                  
+   151                                  
+   152 00000414 488B2425[00000000]       	mov rsp, [mRSP]
+   153 0000041C 5D                       	pop rbp
+   154 0000041D C3                       	ret
+   155                                   
+   156                                  ;******************************************************************************
+   157                                  Quit:	; EBNF+ end process
+   158 0000041E E86B040000              	call Message
+   159 00000423 0A0A51756974696E67-     	 db 10, 10, "Quiting.."
+   159 0000042C 2E2E               
+   160 0000042E 4889CF                  	mov rdi, rcx		; 0 = success exit code or error?
+   161 00000431 B83C000000              	mov rax, 60		; 60 = exit
+   162 00000436 0F05                       	syscall			; will not return back, memory regained by OS
+   163                                  
+   164                                  ;******************************************************************************
+   165                                  ;			Memory (for main and thread)
+   166                                  ;******************************************************************************
+   167                                  %define PROT_READ	0x1
+   168                                  %define PROT_WRITE	0x2
+   169                                  ;%define PROT_EXEC	0x4
+   170                                  %define MAP_PRIVATE	0x0002
+   171                                  %define MAP_ANONYMOUS	0x0020
+   172                                  %define MAP_GROWSDOWN	0x0100
+   173                                  
+   174                                  %define wMemProtF	PROT_WRITE | PROT_READ
+   175                                  %define wMemMapF	MAP_ANONYMOUS | MAP_PRIVATE | MAP_GROWSDOWN
+   176                                  		 	
+   177                                  MemMap:	; request system to allocate memory of size Len somewhere (OS choice)
+   178                                  	; in: rsi = Len
+   179                                  	; out: rax = Add0
+   180                                  	; used: rdi, rdx, r10,r8, r9, rax, rbx
+   181 00000438 BF00000000              	mov rdi, 0	; Let OS choose
+   182 0000043D BA03000000              	mov rdx, wMemProtF
+   183 00000442 41BA22010000            	mov r10, wMemMapF
+   184 00000448 49C7C0FFFFFFFF          	mov r8, -1	; Anonymous fd, so -1
+   185 0000044F 41B900000000            	mov r9, 0	; no fd, so no offset
+   186 00000455 B809000000              	mov rax, 9
+   187                                  		; SYS_MMAP = 9
+   188                                  		; rax,    rdi,   rsi,       rdx,      r10,     r08,    r09.
+   189                                  		;   9, (0|Mem0),  MemL,     ProtF,    mmapF, (-1|fd), fdOffs.
+   190                                  		;   9,  0, 	  wMemL, wMemProtF, wMemMapF,  -1,      0.
+   191 0000045A 0F05                    	 syscall ; rax = Mem0 (mmap always returns bottom of mem)
+   192 0000045C C3                      	ret
+   193                                  
+   194                                  MemUnmap:
+   195                                  	; returns memory allocated by MemMap back to system
+   196                                  	; in: rdi = Add0, rsi = Len
+   197                                  	; out: rax = Errno
+   198                                  	; used: rbx, rcx, r11
+   199 0000045D 5B                      	pop rbx		; may be used also to unmap stack
+   200 0000045E B80B000000              	mov rax, 11
+   201                                  		; SYS_MUNMAP = 11
+   202                                  		; rax,  rdi, rsi.
+   203                                  		;  11, Add0, Len
+   204 00000463 0F05                    	 syscall	; this line was lost in last 5 versions!
+   205 00000465 FFE3                    	jmp rbx
+   206                                  
+   207                                  ;******************************************************************************
+   208                                  ;				CHIP INFO
+   209                                  ;******************************************************************************
+   210                                  ChipInfo:	; Display if cpu supports AVX, VAES, VPCLMUL, FMA and SHA
+   211                                  
+   212                                  %define MaskAVX		0x18000000	; AVX 		bit 28, 27
+   213                                  %define MaskVAES	0x1A000000	; VAES 	bit 28, 27, and 25
+   214                                  %define MaskVPCLMULQDQ	0x18000002	; VPCLMULQDQ 	bit 28, 27, and 1
+   215                                  %define MaskFMA		0x18001000	; FMA 		bit 28, 27, and 12
+   216                                  %define MaskSHA		0x20000000	; SHA instr (7) bit 29
+   217                                  
+   218 00000467 E822040000              	call Message
+   219 0000046C 12596F757220504320-     	 db 18,"Your PC supports: "
+   219 00000475 737570706F7274733A-
+   219 0000047E 20                 
+   220                                  ; AVX------------------------
+   221 0000047F BB00000018              	mov ebx, MaskAVX
+   222 00000484 E89F000000              	call ChipDetect
+   223 00000489 7409                    	je ChpInf1
+   224 0000048B E8FE030000              	call Message
+   225 00000490 036E6F20                	 db 3, "no "
+   226                                  ChpInf1:
+   227 00000494 E8F5030000              	call Message
+   228 00000499 054156582C20            	 db 5, "AVX, "
+   229                                  ; VAES-----------------------
+   230 0000049F BB0000001A              	mov ebx, MaskVAES
+   231 000004A4 E87F000000              	call ChipDetect
+   232 000004A9 7409                    	je ChpInf2
+   233 000004AB E8DE030000              	call Message
+   234 000004B0 036E6F20                	 db 3, "no "
+   235                                  ChpInf2:
+   236 000004B4 E8D5030000              	call Message
+   237 000004B9 06564145532C20          	 db 6, "VAES, "
+   238                                  ; VPCLMUL--------------------
+   239 000004C0 BB02000018              	mov ebx, MaskVPCLMULQDQ
+   240 000004C5 E85E000000              	call ChipDetect
+   241 000004CA 7509                    	jne ChpInf3
+   242 000004CC E8BD030000              	call Message
+   243 000004D1 036E6F20                	 db 3, "no "
+   244                                  ChpInf3:
+   245 000004D5 E8B4030000              	call Message
+   246 000004DA 0C5650434C4D554C51-     	 db 12, "VPCLMULQDQ, "
+   246 000004E3 44512C20           
+   247                                  ; FMA------------------------
+   248 000004E7 BB00100018              	mov ebx, MaskFMA
+   249 000004EC E837000000              	call ChipDetect
+   250 000004F1 7409                    	je ChpInf4
+   251 000004F3 E896030000              	call Message
+   252 000004F8 036E6F20                	 db 3, "no "
+   253                                  ChpInf4:
+   254 000004FC E88D030000              	call Message
+   255 00000501 05464D412C20            	 db 5, "FMA, "
+   256                                  ; SHA------------------------
+   257 00000507 BB00000020              	mov ebx, MaskSHA
+   258 0000050C E817000000              	call ChipDetect
+   259 00000511 7409                    	je ChpInf5
+   260 00000513 E876030000              	call Message
+   261 00000518 036E6F20                	 db 3, "no "
+   262                                  ChpInf5:
+   263 0000051C E86D030000              	call Message
+   264 00000521 055348412E0A            	 db 5, "SHA.", 10
+   265                                  ; END------------------------
+   266 00000527 C3                      	ret
+   267                                  
+   268                                  ChipDetect:
+   269 00000528 B801000000              	mov eax, 1
+   270 0000052D 0FA2                    	cpuid
+   271 0000052F 21D9                    	and ecx, ebx
+   272 00000531 39D9                    	cmp ecx, ebx	; check desired feature flags
+   273 00000533 750E                    	jne ChInf1 
+   274                                  	   			; processor supports features
+   275 00000535 B900000000              	mov ecx, 0		; specify 0 for XFEATURE_ENABLED_MASK register
+   276 0000053A 0F01D0                  	XGETBV			; result in EDX:EAX
+   277 0000053D 83E006                  	and eax, 06H
+   278 00000540 83F806                  	cmp eax, 06H	; check OS has enabled both XMM and YMM state support
+   279 00000543 C3                      ChInf1:	ret			; zf=1 support, zf=0 notsupported
+   280                                  
+   281                                  
+   282                                  ;******************************************************************************
+   283                                  ;				String operators
+   284                                  ;******************************************************************************
+   285                                   
+   286                                  CLArg1:	; ~() rdx
+   287                                  	; out:	rsi = address 1st command line argument delimited db 0x0
+   288 00000544 BA01000000              	mov rdx, 1
+   289                                  
+   290                                  ;--------------------------------------
+   291                                  CLArg:	; ~(rdx)rsi
+   292                                  	; out:	rsi = address of command (rdx=0) or its rdx_th argument (rdx>0)
+   293                                  	;	delimited by db 0x0
+   294                                  	; 	rdx is limited to mod 8
+   295 00000549 83E207                  	and edx, 7		; max 7 arguments
+   296 0000054C 3A1425[08000000]        	cmp dl, [iArg]		; request more than available? iArg=1 if no arg
+   297 00000553 7C2C                    	jl .cla1
+   298 00000555 E834030000              	   call Message
+   299 0000055A 21496E737566666963-     	    db 33, "Insufficient number of arguments", 10
+   299 00000563 69656E74206E756D62-
+   299 0000056C 6572206F6620617267-
+   299 00000575 756D656E74730A     
+   300 0000057C E9(00000000)            	    jmp quit
+   301                                  	.cla1:
+   302 00000581 488B3425[10000000]      	mov rsi, [pArg]
+   303 00000589 488B34D6                	mov rsi, [rsi+rdx*8]
+   304 0000058D C3                      	ret
+   305                                  	
+   306                                  ;--------------------------------------
+   307                                  sCLArg:	; ~(i) s
+   308                                  	; in:	i index
+   309                                  	; out:	s string
+   310                                  	; do:	return s which equals the ith argument in the command line,
+   311                                  	; 	where 0 returns the command, 1 the first argument etc.
+   312                                  
+   313 0000058E 5B                      	pop rbx		; rbx = 4ret
+   314 0000058F 5A                      	pop rdx		; rdx = index
+   315 00000590 E8B4FFFFFF              	call CLArg	; rsi = *CLArgument
+   316 00000595 56                      	push rsi
+   317 00000596 6631C9                  	xor cx, cx
+   318 00000599 66FFC9                  	dec cx
+   319 0000059C 66FFC1                  .cla1:	inc cx
+   320 0000059F AC                      	lodsb
+   321 000005A0 08C0                    	or al, al
+   322 000005A2 75F8                    	jnz .cla1	; cx = len(CLAargument)			
+   323 000005A4 6689C8                  	mov ax, cx	; ax = len
+   324 000005A7 6689C2                  	mov dx, ax	; dx = len
+   325 000005AA 48FFC2                  	inc rdx
+   326 000005AD 48C1EA03                	shr rdx, 3
+   327 000005B1 48FFC2                  	inc rdx
+   328 000005B4 48C1E203                	shl rdx, 3	; rdx = ((dx+1)/8+1)*8
+   329 000005B8 5E                      	pop rsi		; rsi = *CLArgument
+   330 000005B9 4829D4                  	sub rsp, rdx
+   331                                  
+   332 000005BC 4829CA                  	sub rdx, rcx
+   333 000005BF 48FFCA                  	dec rdx	
+   334 000005C2 4889E7                  	mov rdi, rsp
+   335 000005C5 AA                      	stosb		; len stored on BOS
+   336 000005C6 F3A4                    	rep movsb	; s stored on stack
+   337                                  	
+   338 000005C8 6689D1                  	mov cx, dx	; cx = len
+   339 000005CB 6631C0                  	xor ax, ax
+   340 000005CE F3AA                    	rep stosb	; 0 filled until stack 8 byte aligned
+   341 000005D0 48FFC1                  	inc rcx
+   342 000005D3 FFE3                    	jmp rbx
+   343                                  
+   344                                  ;------------------------------------------------------------------------------
+   345                                  sLI:	; ~() s
+   346                                  	; put on stack last parsed string
+   347                                  
+   348 000005D5 5B                      	pop rbx			; 4ret
+   349 000005D6 4C89E2                  	mov rdx, rLastInLen	; put on stack the pfn, keep 8B stack alignment
+   350 000005D9 48FFC2                  	inc rdx			; 4syscall add the file delimiter byte (0)
+   351 000005DC 48C1EA03                	shr rdx,3
+   352 000005E0 48FFC2                  	inc rdx
+   353 000005E3 48C1E203                	shl rdx, 3
+   354 000005E7 4829D4                  	sub rsp, rdx
+   355 000005EA 4889E7                  	mov rdi, rsp
+   356 000005ED 4C89DE                  	mov rsi, rLastIn
+   357                                  
+   358 000005F0 4C89E1                  	mov rcx, rLastInLen
+   359 000005F3 6689C8                  	mov ax, cx
+   360 000005F6 FC                      	cld
+   361 000005F7 AA                      	stosb
+   362 000005F8 E302                    	jrcxz .sli1
+   363 000005FA F3A4                    	rep movsb
+   364 000005FC 31C0                    .sli1:	xor eax, eax		; place pfn delimiter (0)
+   365 000005FE AA                      	stosb
+   366 000005FF 48FFC1                  	inc rcx
+   367 00000602 FFE3                    	jmp rbx
+   368                                  	
+   369                                  ;------------------------------------------------------------------------------
+   370                                  sConcat:; ~(s1,s2) s3
+   371                                  	; do: replace s1 and s2 with s3 = s1 & s2, all on stack
+   372                                  	; legenda: *=address, A=8 byte aligned, l = length
+   373                                  	;	   BOS bottum of stack (1st unused in high mem)
+   374                                  	;	   TOS top of stack; (latest stacked in low mem)
+   375 00000604 5B                      	pop rbx
+   376                                  ; 0. extend stack with 0x100 bytes
+   377 00000605 FC                      	cld
+   378 00000606 4889E6                  	mov rsi, rsp	; rsi = *s2
+   379 00000609 4881EC00010000          	sub rsp, 0x100
+   380                                  ; 1. move s2 intoto TOS (omit l2 byte)
+   381 00000610 4889E7                  	mov rdi, rsp
+   382 00000613 4831C0                  	xor rax, rax
+   383 00000616 AC                      	lodsb		; rax = l2, rsi = *s2 + 1
+   384 00000617 50                      	 push rax	; >1  = l2
+   385 00000618 4889C1                  	mov rcx, rax	; rcx = l2
+   386 0000061B E302                    	jrcxz .sC1
+   387 0000061D F3A4                    	rep movsb	; rcx = 0, rdi free, rsi = *s2 + l2 + 1
+   388                                     .sC1:
+   389                                  ; 2. calc Al2
+   390 0000061F 88C1                    	mov cl, al	; rcx = l2
+   391 00000621 48FFC1                  	  inc rcx
+   392 00000624 48C1E903                	  shr rcx, 3
+   393 00000628 48FFC1                  	  inc rcx
+   394 0000062B 48C1E103                	  shl rcx, 3	; rcx = Al2
+   395                                  ; 3. calc *s1	  
+   396 0000062F 4829C6                  	sub rsi, rax	; rsi = *s2 + l2  +1 - l2 = *s2 + 1
+   397 00000632 4801CE                  	add rsi, rcx	; rsi = *s2 + Al2 +1 = *s1 + 1
+   398 00000635 48FFCE                  	dec rsi
+   399                                  ; 4. calc l3, Al1, BOS
+   400 00000638 8A0E                    	mov cl, [rsi]	; rcx = l1
+   401 0000063A 51                      	  push rcx	; >2 = l1
+   402 0000063B 4801C8                  	add rax, rcx	; rax = l2 + l1 = l3
+   403 0000063E 48FFC1                  	  inc rcx
+   404 00000641 48C1E903                	  shr rcx, 3
+   405 00000645 48FFC1                  	  inc rcx
+   406 00000648 48C1E103                	  shl rcx, 3	; rcx = Al1
+   407 0000064C 4889F7                  	mov rdi, rsi	; rdi = *s1
+   408 0000064F 4801CF                  	add rdi, rcx	; rdi = *s1 + Al1 = BOS
+   409                                  ; 5. calc Al3
+   410 00000652 4889C2                  	mov rdx, rax	; rdx = l3
+   411 00000655 48FFC2                  	 inc rdx
+   412 00000658 48C1EA03                	 shr rdx, 3
+   413 0000065C 48FFC2                  	 inc rdx
+   414 0000065F 48C1E203                	 shl rdx, 3	; rdx = Al3
+   415                                  ; 6. calc dst TOS
+   416 00000663 4829D7                  	sub rdi, rdx	; rdi = BOS - Al3 = *s3 (later rsp/TOS)
+   417                                  ; 7. mov l3 to dst
+   418 00000666 AA                      	stosb		; l3 in dst
+   419                                  ; 8. mov s1 to dst
+   420 00000667 59                      	   pop rcx	; 2> rcx = l1
+   421 00000668 48FFC6                  	 inc rsi
+   422 0000066B F3A4                    	 rep movsb
+   423                                  ; 9. mov s2 to dst
+   424 0000066D 59                      	  pop rcx	; 1> rcx = len2
+   425 0000066E 4889E6                  	 mov rsi, rsp
+   426 00000671 F3A4                    	 rep movsb
+   427                                  ; 10. fill with 0s
+   428 00000673 4889D1                  	mov rcx, rdx	; rcx = Al3
+   429 00000676 4829C1                  	sub rcx, rax	; rcx = Al3 - l3
+   430 00000679 48FFC9                  	dec rcx		; ! inc cnt byte
+   431 0000067C 30C0                    	xor al, al	; append 0's
+   432 0000067E F3AA                    	rep stosb	; rdi = BOS
+   433                                  ; 11. set rsp to *s3
+   434 00000680 4829D7                  	sub rdi, rdx	; rdi = BOS - Al3 = TOS
+   435 00000683 4889FC                  	mov rsp, rdi
+   436 00000686 48FFC1                  	inc rcx
+   437 00000689 FFE3                    	jmp rbx
+   438                                  
+   439                                  ; -----------------------------------------------------------------------------
+   440                                  DropLastChar:	;
+   441                                  	; Drop the last character from object
+   442 0000068B 49FFCA                  	dec rOutPnt
+   443 0000068E C3                      	ret
+   444                                  
+   445                                  ; -----------------------------------------------------------------------------
+   446                                  sI2HS:	; Convert the 64b integer on stack into 4 hex characters (Little Endian)
+   447                                  	; in: 	db xx, xx, dd, dd, dd, zz, zz, zz ; where dd = dont care, zz=0x0
+   448                                  	; out:	db 04, hh, hh, hh, hh, zz, zz, zz ; where hh is in xx in hex format
+   449 0000068F 5B                      	pop rbx
+   450 00000690 58                      	pop rax
+   451 00000691 50                      	push rax
+   452 00000692 C6042404                	mov byte [rsp], 4
+   453 00000696 488D7C2401              	lea rdi, [rsp+1]
+   454 0000069B 53                      	push rbx
+   455 0000069C E94C0D0000              	jmp Bin2Hex
+   456                                  	
+   457                                  ; -----------------------------------------------------------------------------
+   458                                  sLeft:	; (s1,n)s2    leave on stack s2 = the n left side characters of s1
+   459 000006A1 5B                      	pop rbx
+   460 000006A2 5A                      	pop rdx				; dl = n
+   461 000006A3 4889E6                  	mov rsi, rsp
+   462 000006A6 3A16                    	cmp dl, [rsi]
+   463 000006A8 7E02                    	jle .sCR1
+   464 000006AA 8A16                    	mov dl, [rsi]
+   465                                  		
+   466 000006AC 886C1601                .sCR1:	mov byte [rsi+rdx+1], ch	; delimit s2 with 0	
+   467 000006B0 8616                    	xchg byte [rsi], dl		; dl=len(s1)
+   468                                  
+   469                                  .sLft1: 			; IF Alen(s1)=Alen(s2) THEN done,
+   470                                  				; ELSE move s2 Alen(s1)-Alen(s2) 8B blocks up
+   471 000006B2 FEC2                    	inc dl
+   472 000006B4 C0EA03                  	shr dl, 3
+   473 000006B7 FEC2                    	inc dl
+   474 000006B9 C0E203                  	shl dl, 3			; dl ALen(s1)
+   475 000006BC 4889F7                  	mov rdi, rsi
+   476 000006BF 4801D7                  	add rdi, rdx			; rdi = BOS (so high up in memory)
+   477 000006C2 4883EF08                	sub rdi, 8			; addr in stack for last 8B of s2
+   478 000006C6 8A0E                     	mov cl, [rsi]			; rcx = len(s2)
+   479 000006C8 FEC1                    	inc cl
+   480 000006CA C0E903                  	shr cl, 3
+   481 000006CD FEC1                    	inc cl
+   482 000006CF C0E103                  	shl cl, 3			; dl = ALen(s2)
+   483 000006D2 4801CE                  	add rsi, rcx
+   484 000006D5 4883EE08                	sub rsi, 8
+   485 000006D9 48C1E903                	shr rcx, 3
+   486 000006DD E30B                    	jrcxz .sLft2			; if 0 nothing to move
+   487 000006DF FD                      	std
+   488 000006E0 F348A5                  	rep movsq
+   489 000006E3 4889FC                  	mov rsp, rdi
+   490 000006E6 4883C408                	add rsp, 8
+   491                                  
+   492 000006EA 48FFC1                  .sLft2:	inc rcx
+   493 000006ED FFE3                    	jmp rbx
+   494                                  
+   495                                  ; -----------------------------------------------------------------------------
+   496                                  sCutRight:
+   497                                  	; (s1,n) s2    leave on stack s2 = s1 cut with n bytes right
+   498 000006EF 5B                      	pop rbx
+   499 000006F0 5A                      	pop rdx				; dl = n
+   500 000006F1 4889E6                  	mov rsi, rsp
+   501 000006F4 3A16                    	cmp dl, [rsi]
+   502 000006F6 7E02                    	jle .sCR1
+   503 000006F8 8A16                    	mov dl, [rsi]
+   504                                  		
+   505 000006FA 2A16                    .sCR1:	sub dl, [rsi]			; dl = n -len(s1)
+   506 000006FC F6DA                    	neg dl				; dl = len(s1)-n=len(s2)
+   507                                  	
+   508 000006FE 886C1601                	mov byte [rsi+rdx+1], ch	; delimit s2 with 0
+   509 00000702 8616                    	xchg byte [rsi], dl		; dl=len(s1)
+   510                                  				; IF Alen(s1)=Alen(s2) THEN done,
+   511                                  				; ELSE move s2 Alen(s1)-Alen(s2) 8B blocks up
+   512 00000704 FEC2                    	inc dl
+   513 00000706 C0EA03                  	shr dl, 3
+   514 00000709 FEC2                    	inc dl
+   515 0000070B C0E203                  	shl dl, 3			; dl ALen(s1)
+   516                                  	
+   517 0000070E 4889F7                  	mov rdi, rsi
+   518 00000711 4801D7                  	add rdi, rdx			; rdi = BOS (so high up in memory)
+   519 00000714 4883EF08                	sub rdi, 8			; addr in stack for last 8B of s2
+   520 00000718 8A0E                     	mov cl, [rsi]			; rcx = len(s2)
+   521                                   	
+   522 0000071A FEC1                    	inc cl
+   523 0000071C C0E903                  	shr cl, 3
+   524 0000071F FEC1                    	inc cl
+   525 00000721 C0E103                  	shl cl, 3			; dl = ALen(s2)
+   526                                  	
+   527 00000724 4801CE                  	add rsi, rcx
+   528 00000727 4883EE08                	sub rsi, 8
+   529 0000072B 48C1E903                	shr rcx, 3
+   530 0000072F E30B                    	jrcxz .sCR2			; if 0 nothing to move
+   531 00000731 FD                      	std
+   532 00000732 F348A5                  	rep movsq
+   533 00000735 4889FC                  	mov rsp, rdi
+   534 00000738 4883C408                	add rsp, 8
+   535                                  
+   536 0000073C 48FFC1                  .sCR2:	inc rcx
+   537 0000073F FFE3                    	jmp rbx
+   538                                  	
+   539                                  ; -----------------------------------------------------------------------------
+   540                                  sOut:	; (s)   append s1 to sOut
+   541 00000741 5B                      	pop rbx
+   542 00000742 4889E6                  	mov rsi, rsp
+   543 00000745 FC                      	cld
+   544 00000746 AC                      	lodsb
+   545 00000747 88C1                    	mov cl, al
+   546 00000749 4889CA                  	mov rdx, rcx
+   547 0000074C 48FFC2                  	inc rdx
+   548 0000074F 48C1EA03                	shr rdx, 3
+   549 00000753 48FFC2                  	inc rdx
+   550 00000756 48C1E203                	shl rdx, 3
+   551 0000075A 4C89D7                  	mov rdi, rOutPnt
+   552 0000075D E305                    	jrcxz .sO1
+   553 0000075F F3A4                    	rep movsb
+   554 00000761 4989FA                  	mov rOutPnt, rdi
+   555 00000764 4801D4                  .sO1:	add rsp, rdx
+   556 00000767 48FFC1                  	inc rcx
+   557 0000076A FFE3                    	jmp rbx
+   558                                  ; -----------------------------------------------------------------------------
+   559                                  sDrop:	; (s)
+   560                                  	; do:	drop last string on stack
+   561                                  	; uses:	rax, rdx
+   562 0000076C 5A                      	pop rdx
+   563 0000076D 4831C0                  	xor rax, rax
+   564 00000770 8A0424                  	mov al, [rsp]
+   565 00000773 48FFC0                  	inc rax
+   566 00000776 48C1E803                	shr rax,3
+   567 0000077A 48FFC0                  	inc rax
+   568 0000077D 48C1E003                	shl rax, 3
+   569 00000781 4801C4                  	add rsp, rax
+   570 00000784 FFE2                    	jmp rdx
+   571                                  
+   572                                  sDup:	; (s)s,s
+   573                                  	; do:	duplicate string on stack
+   574                                  	; uses:	rdx, rax, rdi, rsi
+   575 00000786 5A                      	pop rdx
+   576 00000787 4889E6                  	mov rsi, rsp
+   577                                  	
+   578 0000078A 4831C9                  	xor rcx, rcx
+   579 0000078D 8A0E                    	mov cl, [rsi]
+   580 0000078F 48FFC1                  	inc rcx	
+   581 00000792 48C1E903                	shr rcx, 3
+   582 00000796 48FFC1                  	inc rcx
+   583 00000799 4889C8                  	mov rax, rcx
+   584 0000079C 48C1E003                	shl rax, 3
+   585 000007A0 4829C4                  	sub rsp, rax
+   586 000007A3 4889E7                  	mov rdi, rsp
+   587                                  	
+   588 000007A6 FC                      	cld
+   589 000007A7 F348A5                  	rep movsq
+   590                                  	
+   591 000007AA 48FFC1                  	inc rcx
+   592 000007AD FFE2                    	jmp rdx
+   593                                  	
+   594                                  ;------------------------------------------------------------------------------
+   595                                  
+   596                                  sKeyIn:	; push on stack the string keyed in until closed by a return
+   597                                  	; in:	void
+   598                                  	; out:	string on stack (mod 8 alligned, LSB in low mem)
+   599                                  	;	delimited with 0x0 byte, return not included
+   600                                  	;	max len = 254
+   601                                  	; ass:	rsp0 mod 8 = 0
+   602                                  	; 	[rspEnd] = length byte of string
+   603                                  	;	rsp0-100h is within allowed memory space
+   604                                  	; prop:	rsp mod 8 = 0
+   605                                  	;	allwed empty string to return
+   606                                  	; used:	rax, rbx, rcx=1, rdx=0x100, rsi, rdi.
+   607                                  	; todo: what if typed string len is >255? 
+   608                                  
+   609 000007AF 5B                       	pop rbx			; 4ret
+   610                                   
+   611                                   ; 1. Reserve 0x100 bytes on stack, get console input and move string into BOS
+   612 000007B0 BA00010000               	mov rdx, 0x100
+   613 000007B5 4829D4                   	sub rsp, rdx
+   614 000007B8 48FFCA                   	dec rdx
+   615 000007BB 4889E6                   	mov rsi, rsp
+   616 000007BE 48FFC6                   	inc rsi			; start above len byte
+   617 000007C1 4831C0                  	xor rax, rax		; mov rax, SYS_read=0
+   618 000007C4 4889C7                  	mov rdi, rax		; mov rdi, STDIN=0
+   619                                  				; rax=0=sys_read
+   620                                  				; rax	rdi	rsi	rdx
+   621                                  				; 0	fd	*buf	len=FF
+   622 000007C7 0F05                    	 syscall                ; rax = len
+   623 000007C9 48FFC2                  	inc rdx
+   624                                  
+   625 000007CC C6040400                	mov byte [rsp+rax],0	; overwrite 0x0a with delimiter 0
+   626 000007D0 FFC8                    	dec eax			; adapt len since 0x0a is dropped
+   627 000007D2 880424                  	mov [rsp], al		; store len at LSB
+   628                                  
+   629                                  ; 2. move string into lower free stack (higher mem)
+   630 000007D5 48FFC0                  	inc rax
+   631 000007D8 48C1E803                	shr rax, 3
+   632 000007DC 48FFC0                  	inc rax
+   633 000007DF 4889C1                  	mov rcx, rax		; we mov per 8B
+   634 000007E2 48C1E003                	shl rax, 3
+   635 000007E6 4889E6                  	mov rsi, rsp
+   636 000007E9 4883EE08                	sub rsi, 8		; movs is post de/in-crement
+   637 000007ED 4889F7                  	mov rdi, rsi
+   638 000007F0 4801D7                  	add rdi, rdx		; destiny add for MSB
+   639 000007F3 4801C6                  	add rsi, rax		; source add of MSB
+   640 000007F6 FD                      	 std			; mov MSB of string first
+   641 000007F7 F348A5                  	 rep movsq		; rest is moved below MSB
+   642 000007FA 4883C708                	add rdi, 8
+   643 000007FE 4889FC                  	mov rsp, rdi
+   644 00000801 48FFC1                  	inc rcx
+   645 00000804 FFE3                    	jmp rbx
+   646                                  
+   647                                  ; -----------------------------------------------------------------------------
+   648                                  IsNotDef:
+   649                                  	; IsNotDef (Is the last parsed string Not already Defined?)
+   650                                  	; Since this requires check through all sofar compiled code it is made primitive
+   651                                  	; Implementation: Search (from Out0 to rOutPnt) for the text:
+   652                                  	; 	<LastIn> ws "=", where ws is {0x00 to 0x0d}*.
+   653                                  
+   654 00000806 FC                      	cld
+   655 00000807 4C89E2                  	mov rdx, rLastInLen
+   656 0000080A 48FFCA                  	dec rdx			; one less since we test first char separately by scasb
+   657 0000080D 7835                    	js .IND3		; if len= 0 then full match
+   658 0000080F 488B7DC0                	mov rdi, Out0
+   659                                  
+   660 00000813 4C89DE                  .IND1:	mov rsi, rLastIn
+   661 00000816 4C89D1                  	mov rcx, rOutPnt
+   662 00000819 482B4DC0                	sub rcx, Out0		; length search area =  object are (not source!)
+   663 0000081D AC                      	lodsb
+   664 0000081E F2AE                    	repne scasb
+   665                                  
+   666 00000820 4889FB                  	mov rbx, rdi		; keep as start for possible continued search
+   667 00000823 7518                    	jne .IND2		; jmp if no match
+   668                                  	
+   669 00000825 483B7DC0                	cmp rdi, Out0		; check if match is 1st word in Out
+   670                                  ;	je .IND4
+   671 00000829 807FFE0D                	cmp byte [rdi-2], 0x0d	; if not check if it starts with ws
+   672 0000082D 77E4                    	ja .IND1
+   673                                  
+   674 0000082F 4889D1                  .IND4:	mov rcx, rdx
+   675 00000832 E310                    	jrcxz .IND3		; if empty then full match
+   676 00000834 F3A6                    	repe cmpsb		; check if rest of key is there in sIn
+   677 00000836 740C                    	je .IND3		; full match
+   678                                  
+   679 00000838 4889DF                  	mov rdi, rbx		; continue further for 1st char search
+   680 0000083B EBD6                    	jmp .IND1
+   681                                  
+   682 0000083D 4831C9                  .IND2:	xor rcx, rcx		; no match, so true
+   683 00000840 48FFC1                  	inc rcx
+   684 00000843 C3                      	ret
+   685                                  	
+   686 00000844 8A07                    .IND3:	mov al, [rdi]		; parse ws
+   687 00000846 48FFC7                  	inc rdi
+   688 00000849 3C0D                    	cmp al,0x0d
+   689 0000084B 76F7                    	jbe .IND3
+   690                                  
+   691 0000084D 3C3D                    	cmp al, "="
+   692 0000084F 75EC                    	jne .IND2
+   693                                  
+   694 00000851 4831C9                  	xor rcx, rcx
+   695 00000854 C3                      	ret
+   696                                  
+   697                                  ;xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+   698                                  ;				DISPLAY
+   699                                  ;xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+   700                                  sMessage:	;
+   701                                  	; Display stacked string
+   702                                  	; on stack byte order: n, c1, c2, .. cn, 0, .. 0.
+   703                                  	; 	where n is string length
+   704                                  	;	must be delimited by at least one zero
+   705                                  
+   706 00000855 5B                      	pop rbx		; rbx = 4ret
+   707                                  	
+   708 00000856 4889E6                  	mov rsi, rsp
+   709 00000859 FC                      	cld
+   710 0000085A AC                      	lodsb		; al = len
+   711 0000085B 4831D2                  	xor rdx, rdx
+   712 0000085E 88C2                    	mov dl, al
+   713 00000860 B801000000              	mov rax,1	; rax=sys_write=1		for syscall
+   714 00000865 BF01000000              	mov rdi,1	; rdi=fd=1=display		for syscall
+   715 0000086A 51                      	push rcx
+   716 0000086B 4153                    	push r11
+   717 0000086D 0F05                    	syscall
+   718 0000086F 415B                    	pop r11
+   719 00000871 59                      	pop rcx
+   720 00000872 4831D2                  	xor rdx, rdx
+   721 00000875 8A1424                  	mov dl, [rsp]
+   722 00000878 4801E2                  	add rdx, rsp
+   723 0000087B 48FFC2                  	inc rdx			; 4syscall add the file delimiter byte (0)
+   724 0000087E 48C1EA03                	shr rdx,3
+   725 00000882 48FFC2                  	inc rdx
+   726 00000885 48C1E203                	shl rdx, 3
+   727 00000889 4889D4                  	mov rsp, rdx
+   728                                  
+   729 0000088C FFE3                    	jmp rbx
+   730                                  
+   731                                  ;--------------------------------------
+   732                                  Message:
+   733                                  	; Display inline string
+   734                                  	; inline argument: bOffset, String
+   735                                  	; Example:	call Message
+   736                                  	;		 db 4, "test"
+   737                                  
+   738                                  			; offset
+   739                                  			; 0 (return address)
+   740 0000088E 50                      	push rax	; -8  / 40
+   741 0000088F 51                      	push rcx	; -16 / 32
+   742 00000890 52                      	push rdx	; -24 / 24
+   743 00000891 57                      	push rdi	; -32 / 16
+   744 00000892 56                      	push rsi	; -40 /  8
+   745 00000893 4153                    	push r11 	; -48 /  0
+   746 00000895 488B742430              	mov rsi, [rsp+48]	; return address = start of inline text
+   747 0000089A 4831C0                  	xor rax, rax
+   748 0000089D FC                      	cld		; save by pushf?
+   749 0000089E AC                      	lodsb		; rsi points now to string	ready for syscall
+   750 0000089F 4889C2                  	mov rdx, rax	; rdx = length string,		ready for syscall
+   751 000008A2 4801F0                  	add rax, rsi
+   752 000008A5 4889442430              	mov [rsp+48], rax
+   753 000008AA B801000000              	mov rax,1
+   754 000008AF BF01000000              	mov rdi,1
+   755 000008B4 0F05                    	syscall
+   756                                  	
+   757 000008B6 415B                    	pop r11
+   758 000008B8 5E                      	pop rsi
+   759 000008B9 5F                      	pop rdi
+   760 000008BA 5A                      	pop rdx
+   761 000008BB 59                      	pop rcx
+   762 000008BC 58                      	pop rax
+   763                                  
+   764 000008BD C3                      	ret
+   765                                  ;--------------------------------------
+   766                                  MessageMem:	;
+   767                                  	; Display string in memory
+   768                                  	;	in:	rsi=*msg, rdx=len(msg)
+   769                                  	;	lost:	rax, rdi
+   770                                  
+   771 000008BE 51                      	push rcx	; retain rcx=rPOk
+   772 000008BF B801000000              	mov rax,1	; rax=sys_write=1		for syscall
+   773 000008C4 BF01000000              	mov rdi,1	; rdi=fd=1=display		for syscall
+   774 000008C9 4153                    	push r11
+   775 000008CB 0F05                    	syscall
+   776 000008CD 415B                    	pop r11
+   777 000008CF 59                      	pop rcx
+   778 000008D0 C3                      	ret
+   779                                  ;------------------------------------------------------------------------------
+   780                                  ErrorMessage:	;
+   781                                  	; Display inline string as error message, dspebnf and quit 
+   782                                  	; Example	call ErrorMessage
+   783                                  	;		 db 7, "Pardon?"
+   784                                  
+   785 000008D1 E8B8FFFFFF              	call Message
+   786 000008D6 0F2D2D2D2D6572726F-     	 db 15, "----error---->", 0x0a
+   786 000008DF 722D2D2D2D3E0A     
+   787 000008E6 E8(00000000)            	call dmpreg
+   788 000008EB E8(00000000)            	call dmprex
+   789 000008F0 48FF4DE8                	dec qword InPntMax
+   790 000008F4 E895FFFFFF              	call Message
+   791 000008F9 080A4572726F723A20      	 db 8, 10, "Error: "
+   792 00000902 5E                      	pop rsi
+   793 00000903 4831C0                  	xor rax, rax
+   794 00000906 FC                      	cld
+   795 00000907 AC                      	lodsb		; rsi points now to string 	for syscall
+   796 00000908 4889C2                  	mov rdx, rax	; rdx = length string,		for syscall
+   797 0000090B B801000000              	mov rax, 1		; = sys_write
+   798 00000910 BF01000000              	mov rdi, 1		; = stdout
+   799 00000915 0F05                    	 syscall
+   800 00000917 E872FFFFFF              	call Message
+   801 0000091C 02210A                  	 db 2, "!", 10
+   802                                  
+   803 0000091F E86AFFFFFF                	call Message
+   804 00000924 134772616D6D617220-        	 db 19, 'Grammar NOK at "^"', 10
+   804 0000092D 4E4F4B20617420225E-
+   804 00000936 220A               
+   805 00000938 488B75E8                	mov rsi, InPntMax
+   806 0000093C BA20000000              	mov rdx, 0x20
+   807 00000941 4829D6                  	sub rsi, rdx
+   808 00000944 483B75F0                	cmp rsi, In0
+   809 00000948 7F0C                    	jg .em1
+   810 0000094A 488B75F0                	   mov rsi, In0
+   811 0000094E 488B55E8                	   mov rdx, InPntMax
+   812 00000952 482B55F0                	   sub rdx, In0 
+   813                                  	   .em1:
+   814 00000956 B801000000              	mov rax, 1		; = sys_write
+   815 0000095B BF01000000              	mov rdi, 1		; = stdout
+   816 00000960 0F05                    	 syscall
+   817 00000962 E827FFFFFF              	call Message
+   818 00000967 015E                    	 db 1, "^"		; db 4, 27, "[1m"
+   819 00000969 488B75E8                	mov rsi, InPntMax
+   820 0000096D BA20000000              	mov rdx, 0x20
+   821 00000972 B801000000              	mov rax, 1		; = sys_write
+   822 00000977 BF01000000              	mov rdi, 1		; = stdout
+   823 0000097C 0F05                    	 syscall
+   824 0000097E E80BFFFFFF              	call Message
+   825 00000983 025E0A                  	 db 2, "^", 10		;  db 05, 27, "[0m", 10
+   826                                  
+   827 00000986 488B7DE8                	mov rdi, InPntMax
+   828 0000098A 4889FE                  	mov rsi, rdi
+   829 0000098D BA40000000              	mov rdx, 0x40
+   830 00000992 4829D6                  	sub rsi, rdx
+   831 00000995 483B75F0                	cmp rsi, In0
+   832 00000999 7F04                    	jg .em2
+   833 0000099B 488B75F0                	   mov rsi, In0
+   834                                  	   .em2:
+   835 0000099F E8(00000000)            	call dmphexold
+   836 000009A4 E8E5FEFFFF              	call Message
+   837 000009A9 025E0A                  	 db 2, "^", 10		; db 4, 27, "[1m"
+   838 000009AC 488B75E8                	mov rsi, InPntMax
+   839 000009B0 E8(00000000)            	call dmphexrsi
+   840                                  				; call Message
+   841                                  				;  db 4, 27, "[0m"
+   842                                  ;	 
+   843 000009B5 BF00000000              	mov rdi, 0		; 0 = success exit code;later change to error
+   844 000009BA B83C000000              	mov rax, 60		; 60 = exit
+   845 000009BF 0F05                       	syscall			; Quit
+   846                                     	
+   847                                  ;------------------------------------------------------------------------------
+   848                                  MsgLI:	; Displays LI
+   849 000009C1 4C89DE                  	mov rsi, rLastIn	; 4syscall rsi = *string_to_display
+   850 000009C4 4C89E2                  	mov rdx, rLastInLen	; 4syscall rdx = length string
+   851 000009C7 51                      	push rcx	; retain rcx=rPOk
+   852 000009C8 B801000000              	mov rax,1	; rax=sys_write=1		for syscall
+   853 000009CD BF01000000              	mov rdi,1	; rdi=fd=1=display		for syscall
+   854 000009D2 4153                    	push r11
+   855 000009D4 0F05                    	syscall
+   856 000009D6 415B                    	pop r11
+   857 000009D8 59                      	pop rcx
+   858 000009D9 C3                      	ret
+   859                                  ;------------------------------------------------------------------------------
+   860                                  DspLstTrm:	;
+   861                                  	; Display last compiled non terminal. Used in EBNF grammar
+   862 000009DA 4153                    	push r11
+   863 000009DC 51                      	push rcx
+   864 000009DD 488B75E0                	mov rsi, InPntOld
+   865 000009E1 4831D2                  	xor rdx, rdx
+   866                                  DspLI2:	
+   867 000009E4 48FFC2                  	inc rdx
+   868 000009E7 8A0416                  	mov al, [rsi+rdx]
+   869 000009EA 3C3D                    	cmp al, "="
+   870 000009EC 7408                    	je DspLI1
+   871 000009EE 3C20                    	cmp al, " "
+   872 000009F0 7404                    	je DspLI1
+   873 000009F2 3C09                    	cmp al, 9
+   874 000009F4 75EE                    	jne DspLI2
+   875 000009F6 B801000000              DspLI1:	mov rax, sys_write	; = 1
+   876 000009FB BF01000000              	mov rdi, stdout		; = 1
+   877 00000A00 0F05                    	syscall			; in: rdx=len rsi=add of string
+   878 00000A02 E887FEFFFF              	call Message
+   879 00000A07 022C20                  	 db 2, ", "
+   880 00000A0A 59                      	pop rcx
+   881 00000A0B 415B                    	pop r11
+   882 00000A0D C3                      	ret
+   883                                  
+   884                                  ;xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+   885                                  ;				MATH
+   886                                  ;xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+   887                                  
+   888                                  iRandom:		; push on stack hardware generated random 64 bit value  
+   889 00000A0E 5B                      	pop rbx
+   890 00000A0F 480FC7F0                .iRnd1:	rdrand rax
+   891 00000A13 73FA                    	jnc .iRnd1
+   892 00000A15 50                      	push rax
+   893 00000A16 FFE3                    	jmp rbx
+   894                                  
+   895                                  ;xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+   896                                  ; 	           		TIMER
+   897                                  ;xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+   898                                  section .data
+   899 00000000 323059592D4D4D2D44-     EcmaTime	db "20YY-MM-DD HH:mm:ss.ssssssss", 0
+   899 00000009 442048483A6D6D3A73-
+   899 00000012 732E73737373737373-
+   899 0000001B 7300               
+   900 0000001D 53756E2C203036204E-     IMFTime		db "Sun, 06 Nov 2094 08:49:37 GMT", 0
+   900 00000026 6F7620323039342030-
+   900 0000002F 383A34393A33372047-
+   900 00000038 4D5400             
+   901                                  ;------------------------------------------------------------------------------
+   902                                  section .bss
+   903 00000018 ????????????????        SecTime 	resq	1
+   904 00000020 ????????????????        NanTime		resq	1
+   905 00000028 <res 10h>               ScrapTime	resq	2
+   906 00000038 ????????????????        TimReq		resq	1	
+   907 00000040 ????????????????        		resq	1
+   908 00000048 ????????                LockVar		resd	1
+   909                                  ;------------------------------------------------------------------------------
+   910                                  section .text
+   911                                  	
+   912                                  WaitSecond:	; waits n seconds in it's thread, then continues
+   913                                  	; eg. usage in bnf:	WaitSecond (60)
+   914                                  	; this compiles to:	push 60
+   915                                  	;			call WaitSecond
+   916 00000A18 5E                      	pop rsi
+   917 00000A19 5B                      	pop rbx
+   918 00000A1A 56                      	push rsi
+   919 00000A1B 51                      	push rcx
+   920 00000A1C 4153                    	push r11
+   921 00000A1E B823000000               	 mov rax, 35		; syscall;  35 = *struct_time_request, [*struct_time_remainder]
+   922 00000A23 48BF-                   	 mov rdi, TimReq	; 4syscall rdi=*Timer1
+   922 00000A25 [3800000000000000] 
+   923 00000A2D 48891F                  	 mov [rdi], rbx		; seconds on line
+   924 00000A30 4831F6                  	 xor rsi, rsi		; TimRem not used, no time remained required
+   925 00000A33 0F05                    	  syscall
+   926 00000A35 415B                    	pop r11
+   927 00000A37 59                      	pop rcx
+   928 00000A38 C3                      	ret
+   929                                  
+   930                                  ;------------------------------------------------------------------------------
+   931 00000A39 5468752C4672692C53-     aIMFDayName:	db "Thu,Fri,Sat,Sun,Mon,Tue,Wed,"
+   931 00000A42 61742C53756E2C4D6F-
+   931 00000A4B 6E2C5475652C576564-
+   931 00000A54 2C                 
+   932 00000A55 446563204A616E2046-     aIMFMonth:	db "Dec Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov "
+   932 00000A5E 6562204D6172204170-
+   932 00000A67 72204D6179204A756E-
+   932 00000A70 204A756C2041756720-
+   932 00000A79 536570204F6374204E-
+   932 00000A82 6F7620             
+   933                                  
+   934                                  ; EcmaTime:	db "20YY-MM-DD HH:mm:ss.ssssssss", 0
+   935                                  ;		    01234567890123456789012345678
+   936                                  ; IMFTime:	db "Sun, 06 Nov 1994 08:49:37 GMT", 0
+   937                                  
+   938                                  GetTime:	;
+   939                                  	; Get current UTC in Ecma format "20YY-MM-DD HH:mm:ss.sss"
+   940                                  	; Out: updated string at EcmaTime.
+   941                                  	; uses var in .bss: SecTime, NanTime, ScrapTime; in .data: EcmaTime
+   942                                  
+   943 00000A85 B8E4000000              	mov rax, 228		; = sys_clock_gettime
+   944 00000A8A 4831FF                  	xor rdi, rdi
+   945 00000A8D 488D3425[18000000]      	lea rsi, [SecTime]	; address for time in seconds since epoch (unix time)
+   946 00000A95 0F05                    	syscall			;(struct timeval *tv, struct timezone *tz) *tv,
+   947 00000A97 488B0425[18000000]      	mov rax, [SecTime]	; rax = Unix time in seconds since 1 jan 1970
+   948 00000A9F 50                      	push rax
+   949                                  
+   950 00000AA0 4831D2                  	xor rdx, rdx		; calculate day-name
+   951 00000AA3 BB803A0900              	mov rbx, (7*24*3600)
+   952 00000AA8 48F7F3                  	div rbx
+   953 00000AAB 4889D0                  	mov rax, rdx
+   954 00000AAE 4831D2                  	xor rdx, rdx
+   955 00000AB1 BB80510100              	mov rbx, 24*3600
+   956 00000AB6 48F7F3                  	div rbx
+   957 00000AB9 8B0485[390A0000]        	mov eax, [aIMFDayName+4*rax]
+   958 00000AC0 890425[1D000000]        	mov [IMFTime], eax
+   959                                  	
+   960 00000AC7 58                      	pop rax
+   961 00000AC8 B916000000              	mov rcx, 22
+   962 00000ACD 4889C2                  	mov rdx, rax
+   963 00000AD0 482D8099CF61            	sub rax, 0x61CF9980	; 1 jan 2022 = 61CF9980 UTC
+   964 00000AD6 7C42                    	jl .GTErr1
+   965                                  
+   966 00000AD8 4889C2                  .GTY:	mov rdx, rax		;					63B0CD00
+   967 00000ADB 482D8033E101            	sub rax, 0x01E13380	; 1 jan 2023 - 1 jan 2022 = 63B0CD00 -	61CF9980
+   968 00000AE1 0F8C97000000            	jl .GTYEnd		;					01E13380
+   969                                  
+   970 00000AE7 48FFC1                  	inc rcx
+   971 00000AEA 4889C2                  	mov rdx, rax		;					65920080
+   972 00000AED 482D8033E101            	sub rax, 0x01E13380	; 1 jan 2024 - 1 jan 2023 = 65920080 - 	63B0CD00
+   973 00000AF3 0F8C85000000            	jl .GTYEnd		;					01E13380
+   974                                  	
+   975 00000AF9 48FFC1                  	inc rcx
+   976 00000AFC 4889C2                  	mov rdx, rax		;					67748580
+   977 00000AFF 482D0085E201            	sub rax, 0x01E28500	; 1 jan 2025 - 1 jan 2024 = 67748580 -	65920080
+   978 00000B05 7C24                    	jl .GTYEndLeap		;				 (Leap)	01E28500
+   979                                  	
+   980 00000B07 48FFC1                  	inc rcx
+   981 00000B0A 4889C2                  	mov rdx, rax		;					6955B900
+   982 00000B0D 482D8033E101            	sub rax, 0x01E13380	; 1 jan 2026 - 1 jan 2025 = 6955B900 -	67748580
+   983 00000B13 7C69                    	jl .GTYEnd		;					01E13380
+   984                                  	
+   985 00000B15 48FFC1                  	inc rcx
+   986 00000B18 EBBE                    	jmp .GTY
+   987                                  .GTErr1:
+   988 00000B1A E8B2FDFFFF              	call ErrorMessage
+   989 00000B1F 0B59656172203C2032-     	 db 11, "Year < 2022"
+   989 00000B28 303232             
+   990                                  
+   991                                  .GTYEndLeap:
+   992 00000B2B 52                      	push rdx		; left-over after current year calculation
+   993 00000B2C 4889C8                  	mov rax, rcx		; = current year - 2000 
+   994 00000B2F 488D3C25[28000000]      	lea rdi, [ScrapTime]
+   995 00000B37 E841090000              	call Bin2Dec
+   996 00000B3C 668B0425[28000000]      	mov ax, [ScrapTime]
+   997 00000B44 66890425[02000000]      	mov [EcmaTime+2], ax	; year done
+   998 00000B4C 66890425[2B000000]      	mov [IMFTime+14], ax
+   999 00000B54 58                      	pop rax			; = SecTime-Time(1 jan 2022)- Time(1 jan curyear)
+  1000                                  	
+  1001 00000B55 4831C9                  	xor rcx, rcx		; start with month 1 and repeat deducting
+  1002 00000B58 48FFC1                  	inc rcx			; from left-over a month until negative time
+  1003 00000B5B 4889C2                  	mov rdx, rax
+  1004 00000B5E 482D80DE2800            	sub rax, 0x28DE80	; jan = 31*24*3600 = 0x28DE80
+  1005 00000B64 0F8CCD000000            	jl .GTMEnd
+  1006 00000B6A 48FFC1                  	inc rcx
+  1007 00000B6D 4889C2                  	mov rdx, rax
+  1008 00000B70 482D803B2600            	sub rax, 0x263B80	; feb = 29*24*3600 = 0x263B80
+  1009 00000B76 0F8CBB000000            	jl .GTMEnd
+  1010 00000B7C EB49                    	jmp .Y
+  1011                                  
+  1012                                  .GTYEnd:
+  1013 00000B7E 52                      	push rdx		; left-over after current year calculation
+  1014 00000B7F 4889C8                  	mov rax, rcx		; = current year - 2000 
+  1015 00000B82 488D3C25[28000000]      	lea rdi, [ScrapTime]
+  1016 00000B8A E8EE080000              	call Bin2Dec
+  1017 00000B8F 668B0425[28000000]      	mov ax, [ScrapTime]
+  1018 00000B97 66890425[02000000]      	mov [EcmaTime+2], ax	; year done
+  1019 00000B9F 66890425[2B000000]      	mov [IMFTime+14], ax
+  1020 00000BA7 58                      	pop rax			; = SecTime-Time(1 jan 2022)- Time(1 jan curyear)
+  1021                                  	
+  1022 00000BA8 4831C9                  	xor rcx, rcx		; start with month 1 and repeat deducting
+  1023 00000BAB 48FFC1                  	inc rcx			; from left-over a month until negative time
+  1024 00000BAE 4889C2                  	mov rdx, rax
+  1025 00000BB1 482D80DE2800            	sub rax, 0x28DE80	; jan = 31*24*3600 = 0x28DE80
+  1026 00000BB7 7C7E                    	jl .GTMEnd
+  1027 00000BB9 48FFC1                  	inc rcx
+  1028 00000BBC 4889C2                  	mov rdx, rax
+  1029 00000BBF 482D00EA2400            	sub rax, 0x24EA00	; feb = 28*24*3600 = 0x24EA00
+  1030 00000BC5 7C70                    	jl .GTMEnd
+  1031                                  .Y:				; leap year has extra day!
+  1032 00000BC7 48FFC1                  	inc rcx
+  1033 00000BCA 4889C2                  	mov rdx, rax
+  1034 00000BCD 482D80DE2800            	sub rax, 0x28DE80	; mar = 31*24*3600 = 0x28DE80
+  1035 00000BD3 7C62                    	jl .GTMEnd
+  1036 00000BD5 48FFC1                  	inc rcx
+  1037 00000BD8 4889C2                  	mov rdx, rax
+  1038 00000BDB 482D008D2700            	sub rax, 0x278D00	; apr = 30*24*3600 = 0x278D00
+  1039 00000BE1 7C54                    	jl .GTMEnd
+  1040 00000BE3 48FFC1                  	inc rcx
+  1041 00000BE6 4889C2                  	mov rdx, rax
+  1042 00000BE9 482D80DE2800            	sub rax, 0x28DE80	; may = 31*24*3600
+  1043 00000BEF 7C46                    	jl .GTMEnd
+  1044 00000BF1 48FFC1                  	inc rcx
+  1045 00000BF4 4889C2                  	mov rdx, rax
+  1046 00000BF7 482D008D2700            	sub rax, 0x278D00	; jun = 30*24*3600
+  1047 00000BFD 7C38                    	jl .GTMEnd
+  1048 00000BFF 48FFC1                  	inc rcx
+  1049 00000C02 4889C2                  	mov rdx, rax
+  1050 00000C05 482D80DE2800            	sub rax, 0x28DE80	; jul = 31*24*3600
+  1051 00000C0B 7C2A                    	jl .GTMEnd
+  1052 00000C0D 48FFC1                  	inc rcx
+  1053 00000C10 4889C2                  	mov rdx, rax
+  1054 00000C13 482D80DE2800            	sub rax, 0x28DE80	; aug = 31*24*3600
+  1055 00000C19 7C1C                    	jl .GTMEnd
+  1056 00000C1B 48FFC1                  .GTM:	inc rcx
+  1057 00000C1E 4889C2                  	mov rdx, rax
+  1058 00000C21 482D008D2700            	sub rax, 0x278D00	; sept|nov = 30*24*3600
+  1059 00000C27 7C0E                    	jl .GTMEnd
+  1060 00000C29 48FFC1                  	inc rcx
+  1061 00000C2C 4889C2                  	mov rdx, rax
+  1062 00000C2F 482D80DE2800            	sub rax, 0x28DE80	; oct|dec = 31*24*3600
+  1063 00000C35 7DE4                    	jge .GTM
+  1064                                  
+  1065                                  .GTMEnd:
+  1066 00000C37 52                      	push rdx		; left over after current month calculation
+  1067                                  	
+  1068 00000C38 8B048D[550A0000]        	mov eax,[aIMFMonth+4*rcx]
+  1069 00000C3F 890425[25000000]        	mov [IMFTime+8],eax
+  1070                                  	
+  1071 00000C46 4889C8                  	mov rax, rcx
+  1072 00000C49 488D3C25[28000000]      	lea rdi, [ScrapTime]	
+  1073 00000C51 E827080000              	call Bin2Dec
+  1074 00000C56 668B0425[28000000]      	mov ax, [ScrapTime]
+  1075 00000C5E 66890425[05000000]      	mov [EcmaTime+5], ax	; month done
+  1076 00000C66 58                      	pop rax
+  1077                                  	
+  1078 00000C67 4831C9                  	xor rcx, rcx
+  1079 00000C6A 48FFC1                  .GTD:	inc rcx
+  1080 00000C6D 4889C2                   	mov rdx, rax
+  1081 00000C70 482D80510100            	sub rax, 0x15180	; = 24*3600
+  1082 00000C76 7DF2                    	jge .GTD
+  1083                                  
+  1084                                  .GTDEnd:
+  1085 00000C78 52                      	push rdx
+  1086 00000C79 4889C8                  	mov rax, rcx
+  1087 00000C7C 488D3C25[28000000]      	lea rdi, [ScrapTime]	
+  1088 00000C84 E8F4070000              	call Bin2Dec
+  1089 00000C89 668B0425[28000000]      	mov ax, [ScrapTime]
+  1090 00000C91 66890425[08000000]      	mov [EcmaTime+8], ax	; day done
+  1091 00000C99 66890425[22000000]      	mov [IMFTime+5],ax	
+  1092 00000CA1 58                      	pop rax
+  1093                                  
+  1094 00000CA2 4831C9                  	xor rcx, rcx
+  1095 00000CA5 48FFC9                  	dec rcx
+  1096 00000CA8 48FFC1                  .GTh:	inc rcx
+  1097 00000CAB 4889C2                   	mov rdx, rax
+  1098 00000CAE 482D100E0000            	sub rax, 0xE10		; = 3600
+  1099 00000CB4 7DF2                    	jge .GTh
+  1100                                  
+  1101                                  .GThEnd:
+  1102 00000CB6 52                      	push rdx
+  1103 00000CB7 4889C8                  	mov rax, rcx
+  1104 00000CBA 488D3C25[28000000]      	lea rdi, [ScrapTime]	
+  1105 00000CC2 E8B6070000              	call Bin2Dec
+  1106 00000CC7 668B0425[28000000]      	mov ax, [ScrapTime]
+  1107 00000CCF 66890425[0B000000]      	mov [EcmaTime+11], ax	; hour done
+  1108 00000CD7 66890425[2E000000]      	mov [IMFTime+17],ax	
+  1109 00000CDF 58                      	pop rax
+  1110                                  
+  1111 00000CE0 4831C9                  	xor rcx, rcx
+  1112 00000CE3 48FFC9                  	dec rcx
+  1113 00000CE6 48FFC1                  .GTm:	inc rcx
+  1114 00000CE9 4889C2                   	mov rdx, rax
+  1115 00000CEC 4883E83C                	sub rax, 0x3C		; = 60
+  1116 00000CF0 7DF4                    	jge .GTm
+  1117                                  
+  1118                                  .GTmEnd:
+  1119 00000CF2 52                      	push rdx
+  1120 00000CF3 4889C8                  	mov rax, rcx
+  1121 00000CF6 488D3C25[28000000]      	lea rdi, [ScrapTime]	
+  1122 00000CFE E87A070000              	call Bin2Dec
+  1123 00000D03 668B0425[28000000]      	mov ax, [ScrapTime]
+  1124 00000D0B 66890425[0E000000]      	mov [EcmaTime+14], ax	; minute done
+  1125 00000D13 66890425[31000000]      	mov [IMFTime+20],ax	
+  1126 00000D1B 58                      	pop rax
+  1127                                  
+  1128                                  ; 0x3C
+  1129 00000D1C 488D3C25[28000000]      	lea rdi, [ScrapTime]	
+  1130 00000D24 E854070000              	call Bin2Dec
+  1131 00000D29 668B0425[28000000]      	mov ax, [ScrapTime]
+  1132 00000D31 66890425[11000000]      	mov [EcmaTime+17], ax	; second done
+  1133 00000D39 66890425[34000000]      	mov [IMFTime+23],ax	
+  1134                                  
+  1135 00000D41 488B0425[20000000]      	mov rax, [NanTime]
+  1136 00000D49 488D3C25[28000000]      	lea rdi, [ScrapTime]
+  1137 00000D51 E8C2070000              	call Bin4Dec
+  1138                                  	
+  1139 00000D56 8B0425[28000000]        	mov eax, [ScrapTime]
+  1140 00000D5D 25FFFFFF00              	and eax, 0x00FFFFFF
+  1141 00000D62 890425[14000000]        	mov [EcmaTime+20], eax
+  1142                                  	
+  1143 00000D69 C3                      	ret
+  1144                                  
+  1145                                  ;xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+  1146                                  ; 	           Terminal parsers    pIn, pInterval, pFindIn
+  1147                                  ;xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+  1148                                  pIn:	; Parse string at InPnt if it matches sTerm
+  1149                                  	; The string argument is just behind the call:
+  1150                                  	;	e.g.  call pIn
+  1151                                  	;		db 5, "sTerm"
+  1152                                                         
+  1153 00000D6A 5E                      	pop rsi			; OK 200821, overwrite rpOk(=rcx)
+  1154 00000D6B FC                      	cld
+  1155 00000D6C 4831C0                  	xor rax,rax
+  1156 00000D6F AC                      	lodsb			; rax > rcx = Len(sTerm)
+  1157 00000D70 4889C1                  	mov rcx, rax
+  1158 00000D73 4C89C7                  	mov rdi, rInPnt
+  1159 00000D76 4889FA                  	mov rdx, rdi		; start of compare at InPnt0		; unclear what for !!!!!!!!!!
+  1160 00000D79 F3A6                    	repe cmpsb
+  1161 00000D7B 7412                    	je pIn1			; z=0 means match (rcx > 0)
+  1162                                  
+  1163 00000D7D 4801CE                  	add rsi, rcx		; checked, looks amazing correct
+  1164 00000D80 4831C9                  	xor rPOk, rPOk		; No match! > POk = 0
+  1165                                  	
+  1166 00000D83 483B7DE8                	cmp rdi,InPntMax
+  1167 00000D87 7E04                    	jle pInE
+  1168 00000D89 48897DE8                	mov InPntMax,rdi
+  1169                                  
+  1170 00000D8D FFE6                    pInE:	jmp rsi
+  1171                                  
+  1172 00000D8F 4831C9                  pIn1:	xor rPOk, rPOk
+  1173 00000D92 48FFC1                  	inc rPOk		; rPOk=1
+  1174 00000D95 4989D3                  	mov rLastIn, rdx	; Match!
+  1175 00000D98 4989C4                  	mov rLastInLen, rax	; 
+  1176 00000D9B 4989F8                  	mov rInPnt, rdi		; update iInPnt forward
+  1177 00000D9E 4C39CF                  	cmp rdi, rInEnd		; over the edge of sIn?
+  1178 00000DA1 7302                    	jae pIn3
+  1179                                  
+  1180 00000DA3 FFE6                    	jmp rsi
+  1181                                  	
+  1182 00000DA5 49FFC6                  pIn3:	inc rInEndFlg		; rInEndFlg = 1
+  1183 00000DA8 FFE6                    	jmp rsi
+  1184                                  
+  1185                                  ;------------------------------------------------------------
+  1186                                  pInterval:	; OK 200821
+  1187                                  	; Parses byte at InPnt
+  1188                                  	; The string argument is just behind the call:
+  1189                                  	;	e.g.  call pInterval
+  1190                                  	;		db "a", "z"
+  1191                                  	; Operands are only as byte allowed. So 2 bytes after call
+  1192                                  	; this must be enforced by compiler
+  1193                                  
+  1194 00000DAA 5E                      	pop	rsi		; rsi = ^sTerm1
+  1195 00000DAB FC                       	cld
+  1196 00000DAC AC                      	lodsb			; al  = sTerm1
+  1197 00000DAD 413A00                  	cmp al, [rInPnt]	; sTerm1 < char in sIn?
+  1198 00000DB0 7722                    	ja	pInt4
+  1199                                  
+  1200 00000DB2 AC                      	lodsb			; al = aTerm2
+  1201 00000DB3 413A00                     	cmp al,	[rInPnt]	; sTerm2  > char in sIn?
+  1202 00000DB6 721F                    	jb	pInt1
+  1203                                  
+  1204 00000DB8 4831C9                  	xor rPOk, rPOk
+  1205 00000DBB 48FFC1                  	inc rPOk		; rPOk=1
+  1206 00000DBE 4D89C3                  	mov rLastIn, rInPnt	; within interval! update LastIn
+  1207 00000DC1 49FFC0                  	inc rInPnt
+  1208 00000DC4 41BC01000000            	mov rLastInLen, 1
+  1209 00000DCA 4D39C8                  	cmp rInPnt, rInEnd	; iInPnt at end parsed text?
+  1210 00000DCD 7203                    	jb pInt3
+  1211                                  
+  1212 00000DCF 49FFC6                  	inc rInEndFlg	 	; reached end! rInEndFlg = 1
+  1213 00000DD2 FFE6                    pInt3:	jmp rsi
+  1214                                  
+  1215 00000DD4 48FFC6                  pInt4:	inc rsi
+  1216 00000DD7 4831C9                  pInt1:	xor rPOk, rPOk		; outside interval!
+  1217 00000DDA FFE6                    	jmp rsi
+  1218                                  
+  1219                                  ;------------------------------------------------------------
+  1220                                  pIntervalQuad:	;
+  1221                                  	; Parses 8 byte string at InPnt if it false in byte range
+  1222                                  	; The string argument is just behind the call:
+  1223                                  	;	e.g.  call pInterval
+  1224                                  	;		dq 0x12345678 , 0x9abcdef0
+  1225                                  	; Operands are only as quad allowed. So 16 bytes after call
+  1226                                  	; this must be be enforced by compiler
+  1227                                  
+  1228 00000DDC 5E                      	pop	rsi		; rsi = ^sTerm1
+  1229 00000DDD FC                       	cld
+  1230 00000DDE 48AD                    	lodsq			; rax  = sTerm1
+  1231 00000DE0 493B00                  	cmp rax, [rInPnt]	; sTerm1 < quad in sIn?
+  1232 00000DE3 7723                    	ja pIntQ4
+  1233                                  
+  1234 00000DE5 48AD                    	lodsq			; rax = aTerm2
+  1235 00000DE7 493B00                     	cmp rax, [rInPnt]	; sTerm2  > char in sIn?
+  1236 00000DEA 7220                    	jb pIntQ1
+  1237                                  
+  1238 00000DEC 4831C9                  	xor rPOk, rPOk
+  1239 00000DEF 48FFC1                  	inc rPOk		; rPOk=1
+  1240 00000DF2 4D89C3                  	mov rLastIn, rInPnt	; within interval! update LastIn
+  1241 00000DF5 49FFC0                  	inc rInPnt
+  1242 00000DF8 41BC01000000            	mov rLastInLen, 1
+  1243 00000DFE 4D39C8                  	cmp rInPnt, rInEnd	; iInPnt at end parsed text?
+  1244 00000E01 7203                    	jb pIntQ3
+  1245                                  
+  1246 00000E03 49FFC6                  	inc rInEndFlg	 	; reached end! rInEndFlg = 1
+  1247 00000E06 FFE6                    pIntQ3:	jmp rsi
+  1248                                  
+  1249 00000E08 4883C604                pIntQ4: add rsi, 04
+  1250 00000E0C 4831C9                  pIntQ1:	xor rPOk, rPOk		; outside interval!
+  1251 00000E0F FFE6                    	jmp rsi	
+  1252                                  
+  1253                                  ;------------------------------------------------------------
+  1254                                  pFindIn:	;
+  1255                                  	; finds a string beyond InPnt
+  1256                                  	; The string argument is inline coded
+  1257                                  	;	e.g.  call pFindIn
+  1258                                  	;		db 10, "first find"
+  1259                                  	; When found, InPnt points to the find (not behind the find!)
+  1260                                  
+  1261 00000E11 5E                      	pop rsi		; OK 200821
+  1262 00000E12 4831C0                  	xor rax,rax
+  1263 00000E15 FC                      	cld
+  1264 00000E16 AC                      	lodsb			; get len key
+  1265                                  ;	mov ebx, eax		; rbx len left to check				not used is it?
+  1266 00000E17 89C2                    	mov edx, eax		; rdx keep len of key for retry
+  1267 00000E19 48FFCA                  	dec rdx			; one less since wil test 1 first.
+  1268 00000E1C 4C89C7                  	mov rdi, rInPnt		; start search
+  1269                                  pFndNxt:
+  1270 00000E1F 4C89C9                  	mov rcx, rInEnd
+  1271 00000E22 4829F9                  	sub rcx, rdi		; length search area
+  1272                                  
+  1273 00000E25 56                      	push rsi		; get 1st char of key
+  1274 00000E26 AC                      	lodsb
+  1275 00000E27 F2AE                    	repne scasb		; try finding in sIn
+  1276 00000E29 57                      	push rdi		; keep as start for possible next search
+  1277 00000E2A 750D                    	jne pFndNOk		; jmp if no matching char
+  1278                                  
+  1279 00000E2C 4889D1                  	mov rcx, rdx		; if key is one char than finalize
+  1280 00000E2F E314                    	jrcxz pFndOk
+  1281 00000E31 F3A6                    	repe cmpsb		; check if rest of key is there in sIn
+  1282 00000E33 7410                    	je pFndOk		; jmp if full match
+  1283                                  	
+  1284 00000E35 5F                      	pop rdi			; continue further for 1st char search
+  1285 00000E36 5E                      	pop rsi
+  1286 00000E37 EBE6                    	jmp pFndNxt
+  1287                                  
+  1288                                  pFndNOk:
+  1289 00000E39 4883C410                	add rsp, 2*8
+  1290 00000E3D 4801D6                  	add rsi, rdx
+  1291 00000E40 4831C9                  	xor rPOk, rPOk
+  1292 00000E43 FFE6                    	jmp rsi
+  1293                                  
+  1294 00000E45 4883C410                pFndOk:	add rsp, 2*8
+  1295 00000E49 4D89C3                  	mov rLastIn, rInPnt
+  1296 00000E4C 4829D7                  	sub rdi, rdx
+  1297 00000E4F 48FFCF                  	dec rdi
+  1298 00000E52 4989F8                  	mov rInPnt, rdi
+  1299 00000E55 4C29DF                  	sub rdi, rLastIn
+  1300 00000E58 4989FC                  	mov rLastInLen, rdi
+  1301 00000E5B 4831C9                  	xor rPOk, rPOk
+  1302 00000E5E 48FFC1                  	inc rPOk
+  1303 00000E61 FFE6                    	jmp rsi
+  1304                                  
+  1305                                  ;xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+  1306                                  ;		CONTEXT STACK		cPush, cTop, cDrop.rFactCnt
+  1307                                  ; 					cAndProlog, cAndEpilog, cDropExcept.
+  1308                                  ;xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+  1309                                  
+  1310 00000E63 5F                      cPush:	pop rdi
+  1311 00000E64 4150                    	push rInPnt	; [sp+56]
+  1312 00000E66 4156                      	push rInEndFlg	; [sp+48]
+  1313 00000E68 4152                     	push rOutPnt	; [sp+40]
+  1314 00000E6A 4153                    	push rLastIn	; [sp+32]
+  1315 00000E6C 4154                    	push rLastInLen	; [sp+24]
+  1316 00000E6E 4155                     	push rFactCnt	; [sp+16]
+  1317 00000E70 4157                     	push rInChrCnt	; [sp+ 8]						needed?
+  1318 00000E72 4157                     	push r15	; [sp+ 0]
+  1319 00000E74 FFE7                    	jmp rdi
+  1320                                  
+  1321 00000E76 4889E7                  cTop:	mov rdi, rsp
+  1322 00000E79 4C8B4740                	mov rInPnt,	[rdi+64]
+  1323 00000E7D 4C8B7738                	mov rInEndFlg,	[rdi+56]
+  1324 00000E81 4C8B5730                	mov rOutPnt,	[rdi+48]
+  1325 00000E85 4C8B5F28                	mov rLastIn,	[rdi+40]
+  1326 00000E89 4C8B6720                	mov rLastInLen,	[rdi+32]
+  1327 00000E8D 4C8B6F18                	mov rFactCnt,	[rdi+24]
+  1328 00000E91 4C8B7F08                	mov r15,	[rdi+ 8]
+  1329 00000E95 C3                      	ret
+  1330                                  
+  1331                                  ;--------------------------------------------------------
+  1332                                  cAndProlog:	;Concord function will reparse LastIn 
+  1333                                  
+  1334 00000E96 5F                      	pop rdi
+  1335 00000E97 4150                    	push rInPnt	; [sp+56]
+  1336 00000E99 4156                      	push rInEndFlg	; [sp+48]
+  1337 00000E9B 4152                     	push rOutPnt	; [sp+40]
+  1338 00000E9D 4153                    	push rLastIn	; [sp+32]
+  1339 00000E9F 4154                    	push rLastInLen	; [sp+24]
+  1340 00000EA1 4155                     	push rFactCnt	; [sp+16]
+  1341 00000EA3 4157                     	push rInChrCnt	; [sp+ 8]						needed?
+  1342 00000EA5 4157                     	push r15	; [sp+ 0]
+  1343 00000EA7 4D89D8                  	mov rInPnt, rLastIn
+  1344 00000EAA 4D31F6                  	xor rInEndFlg, rInEndFlg	 ; in 0V10 added
+  1345 00000EAD FFE7                    	jmp rdi
+  1346                                  
+  1347                                  ;--------------------------------------------------------
+  1348                                  cAndEpilog:		; same as cDrop
+  1349                                  ;--------------------------------------------------------
+  1350 00000EAF 4C3B45E8                cDrop:	cmp rInPnt,InPntMax		; enables tracing errors
+  1351 00000EB3 7604                    	jbe .cD1			; to see how far max it went OK
+  1352 00000EB5 4C8945E8                	mov InPntMax,rInPnt
+  1353                                  
+  1354 00000EB9 E328                    .cD1:	jrcxz cPop
+  1355                                  
+  1356 00000EBB 5E                      	pop rsi
+  1357 00000EBC 4889E7                  	mov rdi, rsp
+  1358 00000EBF 488B4720                	mov rax, [rdi+32]
+  1359 00000EC3 488945D8                	mov InPrev, rax
+  1360 00000EC7 488B4718                	mov rax, [rdi+24]
+  1361 00000ECB 488945D0                	mov InPrevLen, rax
+  1362 00000ECF 4C8B5F38                	mov rLastIn,	[rdi+56]	; rLastin := previous rInPnt
+  1363 00000ED3 4D89C4                  	mov rLastInLen, rInPnt
+  1364 00000ED6 4D29DC                  	sub rLastInLen, rLastIn
+  1365 00000ED9 4C8B6F10                	mov rFactCnt,	[rdi+16]	; restore rFactCnt
+  1366 00000EDD 4883C440                	add rsp, 64
+  1367 00000EE1 FFE6                    	jmp rsi
+  1368                                  
+  1369                                  ;--------------------------------------------------------	
+  1370 00000EE3 5E                      cPop:	pop rsi
+  1371 00000EE4 415F                    	pop r15		; [sp+ 0]
+  1372 00000EE6 415F                     	pop rInChrCnt	; [sp+ 8]
+  1373 00000EE8 415D                    	pop rFactCnt	; [sp+16]
+  1374 00000EEA 415C                    	pop rLastInLen	; [sp+24]
+  1375 00000EEC 415B                    	pop rLastIn	; [sp+32]
+  1376 00000EEE 415A                     	pop rOutPnt	; [sp+40]
+  1377 00000EF0 415E                    	pop rInEndFlg	; [sp+48]
+  1378 00000EF2 4158                    	pop rInPnt	; [sp+56]
+  1379 00000EF4 FFE6                    	jmp rsi
+  1380                                  
+  1381                                  ;--------------------------------------------------------
+  1382                                  cDropExcept:
+  1383 00000EF6 5E                      	pop rsi
+  1384 00000EF7 4C3B45E8                	cmp rInPnt,InPntMax
+  1385 00000EFB 7E04                    	jle .cDE1
+  1386 00000EFD 4C8945E8                	mov InPntMax, rInPnt
+  1387                                  
+  1388 00000F01 E309                    .cDE1:	jrcxz .cDE2
+  1389 00000F03 4883C440                	add rsp, 64
+  1390 00000F07 4831C9                  	xor rcx, rcx
+  1391 00000F0A FFE6                    	jmp rsi
+  1392                                  
+  1393 00000F0C 415F                    .cDE2:	pop r15		; [sp+ 0]
+  1394 00000F0E 415D                     	pop rFactCnt	; [sp+ 8]	dummy
+  1395 00000F10 415D                    	pop rFactCnt	; [sp+16] ok
+  1396 00000F12 415C                    	pop rLastInLen	; [sp+24] ok
+  1397 00000F14 415B                    	pop rLastIn	; [sp+32] ok
+  1398 00000F16 415A                     	pop rOutPnt	; [sp+40] ok
+  1399 00000F18 415E                    	pop rInEndFlg	; [sp+48] ok
+  1400 00000F1A 4158                    	pop rInPnt	; [sp+56] ok
+  1401 00000F1C 4831C9                  	xor rcx, rcx
+  1402 00000F1F 48FFC1                  	inc rcx
+  1403 00000F22 FFE6                    	jmp rsi
+  1404                                  
+  1405                                  ;xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+  1406                                  ;			   LABEL MECHANISM	(compile time only)
+  1407                                  ;xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+  1408                                  ; For multiple exits of constructs use LblPush to declare and LblTop to apply.
+  1409                                  ; For single or multiple jmps to same location use LblNew to as first label and 
+  1410                                  ; LblUse for further use. See "DefinitionsList" in EBNF.bnf as mixed example.
+  1411                                  ; Label mechanism uses EBNF context variable rFactCnt (r13) for loop nesting.
+  1412                                  ; This is allowed since label and factoring mechanisms are never used mixed.
+  1413                                  
+  1414 00000F24 FFFFFFFF00000000        msklabL: dq 0x00000000ffffffff
+  1415 00000F2C 00000000FFFFFFFF        msklabH: dq 0xffffffff00000000
+  1416                                  
+  1417 00000F34 48C745B05A140000        lClear:	mov qword LblNxtNew, 0x145a
+  1418 00000F3C C3                      	ret
+  1419                                  
+  1420 00000F3D 8B45B0                  LblNew:	mov eax, LblNxtNew		; get fresh new label, upper dw is 0
+  1421 00000F40 4C232C25[2C0F0000]      	and rFactCnt, [msklabH]		; clear lower dword
+  1422 00000F48 4909C5                  	or rFactCnt, rax		; combine the lot
+  1423 00000F4B FF45B0                  	inc dword LblNxtNew		; create a new label for next time
+  1424 00000F4E 4C89D7                  	mov rdi, rOutPnt
+  1425 00000F51 E897040000              	call Bin2Hex
+  1426 00000F56 4989FA                  	mov rOutPnt, rdi
+  1427 00000F59 C3                      	ret
+  1428                                  
+  1429                                  LblCls:
+  1430 00000F5A 4C89E8                  LblUse:	mov rax, rFactCnt
+  1431 00000F5D 4C89D7                  	mov rdi, rOutPnt
+  1432 00000F60 E888040000              	call Bin2Hex
+  1433 00000F65 4989FA                  	mov rOutPnt, rdi
+  1434 00000F68 C3                      	ret
+  1435                                  ;---------------	
+  1436                                  LblPush:
+  1437 00000F69 488B45B0                	mov rax, LblNxtNew
+  1438 00000F6D 48C1E020                	shl rax, 32
+  1439 00000F71 4C232C25[240F0000]      	and rFactCnt, [msklabL]
+  1440 00000F79 4909C5                  	or rFactCnt, rax
+  1441 00000F7C C3                      	ret
+  1442                                  
+  1443 00000F7D 4C89E8                  LblTop: mov rax, rFactCnt
+  1444 00000F80 48C1E820                	shr rax, 32
+  1445 00000F84 4C89D7                  	mov rdi, rOutPnt
+  1446 00000F87 E861040000              	call Bin2Hex
+  1447 00000F8C 4989FA                  	mov rOutPnt, rdi
+  1448 00000F8F C3                      	ret
+  1449                                  
+  1450 00000F90 C3                      LblDrop:ret		; will autimatically drop when leaving context level
+  1451                                  
+  1452                                  pOutLbl:
+  1453 00000F91 5E                      	pop rsi		; store as with LblTop, but avoid doubles
+  1454 00000F92 4831C0                  	xor rax, rax
+  1455 00000F95 FC                      	cld
+  1456 00000F96 AC                      	lodsb
+  1457 00000F97 89C1                    	mov ecx, eax
+  1458 00000F99 4889CA                  	mov rdx, rcx	; rdx = len str
+  1459 00000F9C 4C89D7                  	mov rdi, rOutPnt
+  1460 00000F9F F3A4                    	rep movsb
+  1461 00000FA1 56                      	push rsi	; 4ret
+  1462                                  
+  1463 00000FA2 4C89E8                  	mov rax, rFactCnt
+  1464 00000FA5 48C1E820                	shr rax, 32	; rdi is start add
+  1465 00000FA9 E83F040000              	call Bin2Hex
+  1466 00000FAE B03A                    	mov al, ":"
+  1467 00000FB0 FC                      	cld
+  1468 00000FB1 AA                      	stosb
+  1469                                  				; delete double labels.
+  1470 00000FB2 4989FA                  	mov rOutPnt, rdi
+  1471 00000FB5 48FFCF                  	dec rdi			; rdi = pntr to last char
+  1472 00000FB8 4889D1                  	mov rcx, rdx
+  1473                                  		
+  1474 00000FBB 4883C105                	add rcx, 5	; = len(inline lblprefix) + len(4d hex ID) + len(":")
+  1475 00000FBF 4889FE                  	mov rsi, rdi
+  1476 00000FC2 4829CE                  	sub rsi, rcx
+  1477 00000FC5 FD                      	std			; pOutLbl leaves direction flag set !
+  1478 00000FC6 F3A6                    	repe cmpsb
+  1479 00000FC8 7506                    	jne nomatch
+  1480 00000FCA 48FFC7                  	inc rdi
+  1481 00000FCD 4989FA                  	mov rOutPnt, rdi	; ignore 2nd label.
+  1482                                  
+  1483 00000FD0 48FFC1                  nomatch:inc rcx			; pOk=true in all cases
+  1484 00000FD3 C3                      	ret
+  1485                                  
+  1486                                  ;xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+  1487                                  ;                            Parameters over stack
+  1488                                  ;xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+  1489                                  	
+  1490                                  sPush:	; ~(s_inline_code) S		only on asm level
+  1491                                  	; Do: Put inline string on stack (add ending 08 or 00)
+  1492                                  	; Eg: Call sPush
+  1493                                  	;	db "5. ".txt"
+  1494                                  	; not yet to be used in bnf level, maybe add to exception list as sOut
+  1495 00000FD4 5E                      	pop rsi
+  1496 00000FD5 4831C0                  	xor rax, rax
+  1497 00000FD8 FC                      	cld
+  1498 00000FD9 AC                      	lodsb		; ax = len;
+  1499 00000FDA 4889C1                  	mov rcx, rax	; rcx = len
+  1500 00000FDD 4889C2                  	mov rdx, rax	; rdx = len
+  1501 00000FE0 48FFC2                  	inc rdx
+  1502 00000FE3 48C1EA03                	shr rdx, 3
+  1503 00000FE7 48FFC2                  	inc rdx
+  1504 00000FEA 48C1E203                	shl rdx, 3	; dx = ((dx+1)/8+1)*8
+  1505 00000FEE 4829D4                  	sub rsp, rdx
+  1506                                  
+  1507 00000FF1 4829CA                  	sub rdx, rcx
+  1508 00000FF4 48FFCA                  	dec rdx	
+  1509 00000FF7 4889E7                  	mov rdi, rsp
+  1510 00000FFA AA                      	stosb		; len stored on bos
+  1511 00000FFB E302                    	jrcxz .sP1
+  1512                                  	
+  1513 00000FFD F3A4                    	rep movsb	; s stored on stack
+  1514                                  
+  1515 00000FFF 4889D1                  .sP1:	mov rcx, rdx	; cx = len
+  1516 00001002 6631C0                  	xor ax, ax
+  1517 00001005 F3AA                    	rep stosb	; 0 filled to allign stack
+  1518 00001007 48FFC1                  	inc rcx
+  1519 0000100A FFE6                    	jmp rsi
+  1520                                  
+  1521                                  ;------------------------------------------------------------------------------
+  1522                                  sPushA:	; ~(a)s	Push addressed string alligned on stack				; todo merge with sCLArg in Kernel
+  1523                                  	; In:	address on stack
+  1524                                  	; Out:	string found at address. (string ends with zero byte)
+  1525                                  	; used:	rax, rbx, rdx, rdi, rsi
+  1526                                  
+  1527 0000100C 5B                      	pop rbx		; rbx = 4ret
+  1528 0000100D 5E                      	pop rsi		; address of string in memory
+  1529 0000100E 56                      	push rsi
+  1530 0000100F 6631C9                  	xor cx, cx	; 1. find out length
+  1531 00001012 66FFC9                  	dec cx
+  1532 00001015 66FFC1                  .sPA1:	inc cx
+  1533 00001018 FC                      	cld
+  1534 00001019 AC                      	lodsb
+  1535 0000101A 08C0                    	or al, al
+  1536 0000101C 75F7                    	jnz .sPA1	; cx = len(CLAargument)
+  1537                                  			; 2. 8 byte allign (LSB of add = 0 or 8)
+  1538 0000101E 4889C8                  	mov rax, rcx	; ax = len
+  1539 00001021 4889C2                  	mov rdx, rax	; dx = len
+  1540 00001024 48FFC2                  	inc rdx
+  1541 00001027 48C1EA03                	shr rdx, 3
+  1542 0000102B 48FFC2                  	inc rdx
+  1543 0000102E 48C1E203                	shl rdx, 3	; dx = ((dx+1)/8+1)*8
+  1544 00001032 5E                      	pop rsi		;  address of string in memory
+  1545 00001033 4829D4                  	sub rsp, rdx
+  1546                                  
+  1547 00001036 4829CA                  	sub rdx, rcx	; 3. move the string on stack
+  1548 00001039 48FFCA                  	dec rdx	
+  1549 0000103C 4889E7                  	mov rdi, rsp
+  1550 0000103F AA                      	stosb		; len stored on bos
+  1551 00001040 F3A4                    	rep movsb	; s stored on stack
+  1552                                  			; zero fill rest of stack space
+  1553 00001042 6689D1                  	mov cx, dx	; cx = len
+  1554 00001045 6631C0                  	xor ax, ax
+  1555 00001048 F3AA                    	rep stosb	; 0 filled until stack 8 byte aligned
+  1556 0000104A 48FFC1                  	inc rcx
+  1557 0000104D FFE3                    	jmp rbx
+  1558                                  
+  1559                                  ;xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+  1560                                  ;                        	OUTPUT
+  1561                                  ;xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+  1562                                  pOut:	; Append inline string to Out.
+  1563                                  	; Examples:	call pOut
+  1564                                  	;		 db 6, "Hello!"
+  1565                                  	; In EBNF: 	pOut("Hello!"), pOut("Hi ","there")
+  1566                                  	; Note:	pOut(sVariablename) is not allowed!
+  1567 0000104F 5E                      	pop rsi
+  1568 00001050 4831C0                  	xor rax, rax
+  1569 00001053 FC                      	cld
+  1570 00001054 AC                      	lodsb			; get length in rcx
+  1571 00001055 89C1                    	mov ecx, eax
+  1572 00001057 4C89D7                  	mov rdi, rOutPnt
+  1573 0000105A 4801F8                  add rax, rdi
+  1574 0000105D 483B45B8                cmp rax, OutBufEnd
+  1575 00001061 730A                    jae pOutErr
+  1576 00001063 F3A4                    	rep movsb
+  1577 00001065 4989FA                  	mov rOutPnt, rdi
+  1578                                  ;	cmp rdi, OutBufEnd	; dan is t te laat!
+  1579                                  ;	jae pOutErr
+  1580 00001068 48FFC1                  	inc rcx
+  1581 0000106B FFE6                    	jmp rsi
+  1582                                  
+  1583                                  pOutErr:
+  1584 0000106D E85FF8FFFF              	call ErrorMessage
+  1585 00001072 164F75747075742062-     	 db 22, "Output buffer overflow"
+  1585 0000107B 7566666572206F7665-
+  1585 00001084 72666C6F77         
+  1586                                  
+  1587                                  ;Last In-------------------------------
+  1588                                  pOutLI:	; Append last parsed string to Out.
+  1589 00001089 4C89E1                  	mov rcx, rLastInLen
+  1590 0000108C E318                    	jrcxz .pO1
+  1591 0000108E 4C89DE                  	mov rsi, rLastIn
+  1592 00001091 4C89D7                  	mov rdi, rOutPnt
+  1593 00001094 FC                      	cld
+  1594 00001095 4889C8                  mov rax, rcx
+  1595 00001098 4801F8                  add rax, rdi
+  1596 0000109B 483B45B8                cmp rax, OutBufEnd
+  1597 0000109F 73CC                    jae pOutErr
+  1598 000010A1 F3A4                    	rep movsb
+  1599 000010A3 4989FA                  	mov rOutPnt, rdi
+  1600 000010A6 48FFC1                  .pO1:	inc rcx
+  1601 000010A9 C3                      	ret
+  1602                                  ;--------------------------------------
+  1603                                  pOutLILen:
+  1604                                  	; Append length of last parsed string to Out.
+  1605                                  	; The length is in hex format
+  1606 000010AA 4C89E0                  	mov rax, rLastInLen
+  1607 000010AD 4C89D7                  	mov rdi, rOutPnt
+  1608 000010B0 E838030000              	call Bin2Hex
+  1609 000010B5 4989FA                  	mov rOutPnt, rdi
+  1610 000010B8 C3                      	ret
+  1611                                  ;Previous In --------------------------
+  1612                                  pOutPILen:
+  1613                                  	; Append length of last parsed string to Out.
+  1614                                  	; The length is in hex format
+  1615 000010B9 488B45D0                	mov rax, InPrevLen
+  1616 000010BD 4C89D7                  	mov rdi, rOutPnt
+  1617 000010C0 E828030000              	call Bin2Hex
+  1618 000010C5 4989FA                  	mov rOutPnt, rdi
+  1619 000010C8 C3                      	ret
+  1620                                  	
+  1621                                  ;--------------------------------------
+  1622                                  pOutPI:	; Append last parsed string to Out
+  1623 000010C9 488B4DD0                	mov rcx, InPrevLen		; no zero LI?
+  1624 000010CD 488B75D8                	mov rsi, InPrev
+  1625 000010D1 4C89D7                  	mov rdi, rOutPnt
+  1626 000010D4 FC                      	cld
+  1627 000010D5 F3A4                    	rep movsb
+  1628 000010D7 4989FA                  	mov rOutPnt, rdi
+  1629 000010DA 48FFC1                  	inc rcx
+  1630 000010DD C3                      	ret
+  1631                                  	
+  1632                                  ;0 Hold In-----------------------------		
+  1633                                  pHI0:	; Hold last parsed string in vault 0
+  1634                                  	; Each thread may reference up to 6 strings.
+  1635 000010DE 4C89A570FFFFFF          	mov InHoldLen0, rLastInLen
+  1636 000010E5 4C899D78FFFFFF          	mov InHold0, rLastIn
+  1637 000010EC C3                      	ret
+  1638                                  pOutHI0:
+  1639 000010ED 4889CA                  	mov rdx, rcx
+  1640 000010F0 488B8D70FFFFFF          	mov rcx, InHoldLen0
+  1641 000010F7 E313                    	jrcxz .pOHI
+  1642 000010F9 488BB578FFFFFF          	mov rsi, InHold0
+  1643 00001100 4C89D7                  	mov rdi, rOutPnt
+  1644 00001103 FC                      	cld
+  1645 00001104 F3A4                    	rep movsb
+  1646 00001106 4989FA                  	mov rOutPnt, rdi
+  1647 00001109 4889D1                  	mov rcx, rdx
+  1648 0000110C C3                      .pOHI:	ret
+  1649                                  
+  1650                                  pOutHILen0:
+  1651 0000110D 488B8570FFFFFF          	mov rax, InHoldLen0
+  1652 00001114 4C89D7                  	mov rdi, rOutPnt
+  1653 00001117 E8D1020000              	call Bin2Hex
+  1654 0000111C 4989FA                  	mov rOutPnt, rdi
+  1655 0000111F C3                      	ret
+  1656                                  
+  1657                                  ;1-------------------------------------
+  1658                                  pHI1:	; Hold last parsed string in vault 1
+  1659 00001120 4C89A560FFFFFF          	mov InHoldLen1, rLastInLen
+  1660 00001127 4C899D68FFFFFF          	mov InHold1, rLastIn
+  1661 0000112E C3                      	ret
+  1662                                  
+  1663                                  pOutHI1:
+  1664 0000112F 4889CA                  	mov rdx, rcx
+  1665 00001132 488B8D60FFFFFF          	mov rcx, InHoldLen1
+  1666 00001139 E313                    	jrcxz .pOHI
+  1667 0000113B 488BB568FFFFFF          	mov rsi, InHold1
+  1668 00001142 4C89D7                  	mov rdi, rOutPnt
+  1669 00001145 FC                      	cld
+  1670 00001146 F3A4                    	rep movsb
+  1671 00001148 4989FA                  	mov rOutPnt, rdi
+  1672 0000114B 4889D1                  	mov rcx, rdx
+  1673 0000114E C3                      .pOHI:	ret
+  1674                                  
+  1675                                  pOutHILen1:
+  1676 0000114F 488B8560FFFFFF          	mov rax, InHoldLen1
+  1677 00001156 4C89D7                  	mov rdi, rOutPnt
+  1678 00001159 E88F020000              	call Bin2Hex
+  1679 0000115E 4989FA                  	mov rOutPnt, rdi
+  1680 00001161 C3                      	ret
+  1681                                  
+  1682                                  ;2-------------------------------------
+  1683                                  pHI2:	; Hold last parsed string in vault 2
+  1684 00001162 4C89A550FFFFFF          	mov InHoldLen2, rLastInLen
+  1685 00001169 4C899D58FFFFFF          	mov InHold2, rLastIn
+  1686 00001170 C3                      	ret
+  1687                                  
+  1688                                  pOutHI2:
+  1689 00001171 4889CA                  	mov rdx, rcx
+  1690 00001174 488B8D50FFFFFF          	mov rcx, InHoldLen2
+  1691 0000117B E313                    	jrcxz .pOHI
+  1692 0000117D 488BB558FFFFFF          	mov rsi, InHold2
+  1693 00001184 4C89D7                  	mov rdi, rOutPnt
+  1694 00001187 FC                      	cld
+  1695 00001188 F3A4                    	rep movsb
+  1696 0000118A 4989FA                  	mov rOutPnt, rdi
+  1697 0000118D 4889D1                  	mov rcx, rdx
+  1698 00001190 C3                      .pOHI:	ret
+  1699                                  
+  1700                                  pOutHILen2:
+  1701 00001191 488B8550FFFFFF          	mov rax, InHoldLen2
+  1702 00001198 4C89D7                  	mov rdi, rOutPnt
+  1703 0000119B E84D020000              	call Bin2Hex
+  1704 000011A0 4989FA                  	mov rOutPnt, rdi
+  1705 000011A3 C3                      	ret
+  1706                                  	
+  1707                                  ;3-------------------------------------	
+  1708                                  pHI3:	; Hold last parsed string in vault 3
+  1709 000011A4 4C89A540FFFFFF          	mov InHoldLen3, rLastInLen
+  1710 000011AB 4C899D48FFFFFF          	mov InHold3, rLastIn
+  1711 000011B2 C3                      	ret
+  1712                                  
+  1713                                  pOutHI3:
+  1714 000011B3 4889CA                  	mov rdx, rcx
+  1715 000011B6 488B8D40FFFFFF          	mov rcx, InHoldLen3
+  1716 000011BD E313                    	jrcxz .pOHI
+  1717 000011BF 488BB548FFFFFF          	mov rsi, InHold3
+  1718 000011C6 4C89D7                  	mov rdi, rOutPnt
+  1719 000011C9 FC                      	cld
+  1720 000011CA F3A4                    	rep movsb
+  1721 000011CC 4989FA                  	mov rOutPnt, rdi
+  1722 000011CF 4889D1                  	mov rcx, rdx
+  1723 000011D2 C3                      .pOHI:	ret
+  1724                                  
+  1725                                  pOutHILen3:
+  1726 000011D3 488B8540FFFFFF          	mov rax, InHoldLen3
+  1727 000011DA 4C89D7                  	mov rdi, rOutPnt
+  1728 000011DD E80B020000              	call Bin2Hex
+  1729 000011E2 4989FA                  	mov rOutPnt, rdi
+  1730 000011E5 C3                      	ret
+  1731                                  ;4-------------------------------------
+  1732                                  pHI4:	; Hold last parsed string in vault 4
+  1733 000011E6 4C89A530FFFFFF          	mov InHoldLen4, rLastInLen
+  1734 000011ED 4C899D38FFFFFF          	mov InHold4, rLastIn
+  1735 000011F4 C3                      	ret
+  1736                                  
+  1737                                  pOutHI4:
+  1738 000011F5 4889CA                  	mov rdx, rcx
+  1739 000011F8 488B8D30FFFFFF          	mov rcx, InHoldLen4
+  1740 000011FF E313                    	jrcxz .pOHI
+  1741 00001201 488BB538FFFFFF          	mov rsi, InHold4
+  1742 00001208 4C89D7                  	mov rdi, rOutPnt
+  1743 0000120B FC                      	cld
+  1744 0000120C F3A4                    	rep movsb
+  1745 0000120E 4989FA                  	mov rOutPnt, rdi
+  1746 00001211 4889D1                  	mov rcx, rdx
+  1747 00001214 C3                      .pOHI:	ret
+  1748                                  
+  1749                                  pOutHILen4:
+  1750 00001215 488B8530FFFFFF          	mov rax, InHoldLen4
+  1751 0000121C 4C89D7                  	mov rdi, rOutPnt
+  1752 0000121F E8C9010000              	call Bin2Hex
+  1753 00001224 4989FA                  	mov rOutPnt, rdi
+  1754 00001227 C3                      	ret
+  1755                                  ;5-------------------------------------
+  1756                                  pHI5:	; Hold last parsed string in vault 5
+  1757 00001228 4C89A520FFFFFF          	mov InHoldLen5, rLastInLen
+  1758 0000122F 4C899D28FFFFFF          	mov InHold5, rLastIn
+  1759 00001236 C3                      	ret
+  1760                                  
+  1761                                  pOutHI5:
+  1762 00001237 4889CA                  	mov rdx, rcx
+  1763 0000123A 488B8D20FFFFFF          	mov rcx, InHoldLen5
+  1764 00001241 E313                    	jrcxz .pOHI
+  1765 00001243 488BB528FFFFFF          	mov rsi, InHold5
+  1766 0000124A 4C89D7                  	mov rdi, rOutPnt
+  1767 0000124D FC                      	cld
+  1768 0000124E F3A4                    	rep movsb
+  1769 00001250 4989FA                  	mov rOutPnt, rdi
+  1770 00001253 4889D1                  	mov rcx, rdx
+  1771 00001256 C3                      .pOHI:	ret
+  1772                                  
+  1773                                  pOutHILen5:
+  1774 00001257 488B8520FFFFFF          	mov rax, InHoldLen5
+  1775 0000125E 4C89D7                  	mov rdi, rOutPnt
+  1776 00001261 E887010000              	call Bin2Hex
+  1777 00001266 4989FA                  	mov rOutPnt, rdi
+  1778 00001269 C3                      	ret
+  1779                                  	
+  1780 0000126A 5B                       sHI5:	pop rbx
+  1781 0000126B 488B9520FFFFFF          	mov rdx, InHoldLen5
+  1782 00001272 48FFC2                  	inc rdx
+  1783 00001275 48C1EA03                	shr rdx, 3
+  1784 00001279 48FFC2                  	inc rdx
+  1785 0000127C 48C1E203                	shl rdx, 3
+  1786 00001280 4889E7                  	mov rdi, rsp
+  1787 00001283 4829D7                  	sub rdi, rdx
+  1788 00001286 4889FC                  	mov rsp, rdi
+  1789 00001289 4831C9                  	xor rcx, rcx
+  1790 0000128C 488B8D20FFFFFF          	mov rcx, InHoldLen5
+  1791 00001293 88C8                    	mov al, cl
+  1792 00001295 FC                      	cld
+  1793 00001296 AA                      	stosb			; len on stack
+  1794 00001297 488BB528FFFFFF          	mov rsi, InHold5
+  1795 0000129E F3A4                    	rep movsb		; string on stack
+  1796 000012A0 88C8                    	mov al, cl		; delimit with 0
+  1797 000012A2 AA                      	stosb
+  1798 000012A3 48FFC1                  	inc rcx			; pOk true
+  1799 000012A6 FFE3                    	jmp rbx
+  1800                                  ;------------------------------------------------------------------------------
+  1801                                  pOutLIHex2Bin:
+  1802 000012A8 4C89DE                  	mov rsi, rLastIn
+  1803 000012AB 4C89D7                  	mov rdi, rOutPnt
+  1804 000012AE FC                      	cld
+  1805 000012AF 66AD                    	lodsw
+  1806 000012B1 E830030000              	call Hex2Bin	
+  1807 000012B6 AA                      	stosb
+  1808 000012B7 4989FA                  	mov rOutPnt, rdi
+  1809 000012BA C3                      	ret
+  1810                                  ;--------------------------------------
+  1811                                  pOutLITrim:
+  1812 000012BB 4889CA                  	mov rdx, rcx
+  1813 000012BE FC                      	cld
+  1814 000012BF 4C89E1                  	mov rcx, rLastInLen
+  1815 000012C2 4C89DE                  	mov rsi, rLastIn
+  1816 000012C5 4C89D7                  	mov rdi, rOutPnt
+  1817 000012C8 E314                    pOLIT1:	jrcxz pOLIT2
+  1818 000012CA 48FFC9                  	dec rcx
+  1819 000012CD AC                      	lodsb
+  1820 000012CE 3C30                    	cmp al, "0"
+  1821 000012D0 74F6                    	je pOLIT1
+  1822                                  			; last is not zero
+  1823 000012D2 AA                      	stosb		; so it is stored
+  1824 000012D3 E302                    	jrcxz pOLIT3	; are there more
+  1825                                  			; there is a rest
+  1826 000012D5 F3A4                    	rep movsb	; so rest is are moved
+  1827                                  pOLIT3:			; no rest
+  1828 000012D7 4989FA                  	mov rOutPnt, rdi ; done
+  1829 000012DA 4889D1                  	mov rcx, rdx
+  1830 000012DD C3                      	ret
+  1831                                  pOLIT2: 		; all were 0! (or string was empty, then strange)
+  1832 000012DE B030                    	mov al, "0"	; to cover also the case if str is empty
+  1833 000012E0 AA                      	stosb		; so store the zero
+  1834 000012E1 4989FA                  	mov rOutPnt, rdi	
+  1835 000012E4 4889D1                  	mov rcx, rdx
+  1836 000012E7 C3                      	ret
+  1837                                  ;--------------------------------------
+  1838                                  pOutLIdpTrim:
+  1839 000012E8 4889CA                  	mov rdx, rcx
+  1840 000012EB 4C89DE                  	mov rsi, rLastIn	; = len, number;
+  1841 000012EE 4C89E1                  	mov rcx, rLastInLen	; len of the number + 1
+  1842 000012F1 4C89D7                  	mov rdi, rOutPnt
+  1843                                  
+  1844 000012F4 FC                      	cld
+  1845 000012F5 AC                      	lodsb			; number of decimals after decimal point
+  1846 000012F6 4831DB                  	xor rbx,rbx
+  1847 000012F9 88C3                    	mov bl, al
+  1848 000012FB 80EB30                  	sub bl, 030h
+  1849 000012FE 4839D9                  	cmp rcx, rbx
+  1850 00001301 7C43                    	jl .T5
+  1851                                  .T1:	
+  1852 00001303 E325                    	jrcxz .T2
+  1853 00001305 48FFC9                  	dec rcx
+  1854 00001308 38D9                    	 cmp cl, bl
+  1855 0000130A 742B                    	 je .T4
+  1856 0000130C AC                      	lodsb
+  1857 0000130D 3C30                    	cmp al, "0"
+  1858 0000130F 74F2                    	je .T1		; if an="0" then skip input
+  1859                                  
+  1860 00001311 48FFCE                  	dec rsi
+  1861 00001314 E330                    .T3	jrcxz .T5
+  1862 00001316 A4                      	movsb
+  1863 00001317 48FFC9                  	dec rcx
+  1864 0000131A 38D9                    	cmp cl, bl
+  1865 0000131C 7FF6                    	jg .T3
+  1866                                  	
+  1867 0000131E B02E                    	mov al, "."
+  1868 00001320 AA                      	stosb
+  1869 00001321 F3A4                    	rep movsb
+  1870 00001323 4989FA                  	mov rOutPnt, rdi
+  1871 00001326 4889D1                  	mov rcx, rdx
+  1872 00001329 C3                      	ret
+  1873                                  
+  1874 0000132A B8302E3030              .T2	mov rax, "0.00"
+  1875 0000132F AB                      	stosd
+  1876 00001330 4989FA                  	mov rOutPnt, rdi
+  1877 00001333 4889D1                  	mov rcx, rdx
+  1878 00001336 C3                      	ret
+  1879                                  	
+  1880 00001337 66B8302E                .T4	mov ax, "0."
+  1881 0000133B 66AB                    	stosw
+  1882 0000133D F3A4                    	rep movsb
+  1883 0000133F 4989FA                  	mov rOutPnt, rdi
+  1884 00001342 4889D1                  	mov rcx, rdx
+  1885 00001345 C3                      	ret
+  1886                                  	
+  1887 00001346 48B82D647020657272-     .T5	mov rax, "-dp err-"
+  1887 0000134F 2D                 
+  1888 00001350 48AB                    	stosq
+  1889 00001352 4989FA                  	mov rOutPnt, rdi
+  1890 00001355 4889D1                  	mov rcx, rdx
+  1891 00001358 C3                      	ret
+  1892                                  ;--------------------------------------
+  1893 00001359 41C6020A                pOutCr: mov byte [rOutPnt], 10
+  1894 0000135D 49FFC2                  	inc rOutPnt
+  1895 00001360 C3                      	ret
+  1896                                  ;--------------------------------------
+  1897                                  pOutLIHex:
+  1898 00001361 4C89DE                  	mov rsi, rLastIn
+  1899 00001364 4C89E2                  	mov rdx, rLastInLen
+  1900 00001367 4C89D7                  	mov rdi, rOutPnt
+  1901                                  pOutLIH2:
+  1902 0000136A AC                      	lodsb
+  1903 0000136B 56                      	push rsi
+  1904 0000136C E849000000              	call Bin1Hex
+  1905 00001371 5E                      	pop rsi
+  1906                                  	
+  1907                                  ;	mov al, " "
+  1908                                  ;	stosb
+  1909                                  	
+  1910 00001372 48FFCA                  	dec rdx
+  1911 00001375 75F3                    	jnz pOutLIH2
+  1912                                  
+  1913                                  pOutLIH1:
+  1914 00001377 4989FA                  	mov rOutPnt, rdi
+  1915 0000137A C3                      	ret
+  1916                                  
+  1917                                  ;-------------------------------  still required ?????
+  1918                                  pOutInPnt:	; used by tls to append to sOut the binary pointer pIntPnt
+  1919                                  		; as quad
+  1920 0000137B 4C89D7                  		mov rdi, rOutPnt
+  1921 0000137E 4C89C0                  		mov rax, rInPnt
+  1922 00001381 482B45F0                		sub rax, In0
+  1923 00001385 FC                      		cld
+  1924 00001386 48AB                    		stosq
+  1925 00001388 4989FA                  		mov rOutPnt, rdi
+  1926 0000138B C3                      		ret
+  1927                                  ;-------------------------------
+  1928                                  pOutLILenByte:	; used by tls to append to sOut the binary length of last in
+  1929                                  		; as byte
+  1930 0000138C 4C89D7                  		mov rdi, rOutPnt
+  1931 0000138F 4C89E0                  		mov rax, rLastInLen
+  1932 00001392 FC                      		cld
+  1933 00001393 AA                      		stosb
+  1934 00001394 4989FA                  		mov rOutPnt, rdi
+  1935 00001397 C3                      		ret
+  1936                                  ; -----------------------------------------------------------------------------
+  1937                                  OutSrcLin:
+  1938 00001398 488B75E0                	mov rsi, InPntOld     
+  1939 0000139C 4C89D7                  	mov rdi, rOutPnt
+  1940 0000139F FC                      	cld
+  1941 000013A0 66B80A3B                OutSL2:	mov ax, 0x3B0A
+  1942 000013A4 66AB                    	stosw
+  1943 000013A6 4C39C6                  OutSL1:	cmp rsi, rInPnt
+  1944 000013A9 7408                    	je OutSL3
+  1945                                  	
+  1946 000013AB AC                      	lodsb
+  1947 000013AC 3C0A                    	cmp al,0x0A
+  1948 000013AE 74F0                    	je OutSL2
+  1949                                  
+  1950 000013B0 AA                      	stosb
+  1951 000013B1 EBF3                    	jmp OutSL1
+  1952                                  
+  1953 000013B3 48FFCF                  OutSL3:	dec rdi
+  1954 000013B6 4989FA                  	mov rOutPnt, rdi
+  1955 000013B9 C3                      	ret
+  1956                                  
+  1957                                  ;xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+  1958                                  ;				CONVERSIONS
+  1959                                  ;	Bin1Hex, Bin2Hex,Bin2Dec, Bin4Dec, BinNDec, Dec2Bin, Hex2Bin
+  1960                                  ;xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+  1961                                  
+  1962                                  Bin1Hex:; convert 1 byte binary to hex (2 byte).
+  1963                                  	; in: al byte, rdi = address for output
+  1964                                  	; out: hex digit at [rdi]
+  1965                                  	; uses: aiHex (array), rax, rbx, rsi
+  1966 000013BA 48BE-                   	mov rsi, aiHex
+  1966 000013BC [DD13000000000000] 
+  1967 000013C4 4831DB                  	xor rbx, rbx
+  1968 000013C7 88C3                    	mov bl, al
+  1969 000013C9 4889D8                  	mov rax, rbx
+  1970 000013CC C0E804                  	shr al, 4
+  1971 000013CF 8A0406                  	mov al, [rsi+rax]
+  1972 000013D2 FC                      	cld		
+  1973 000013D3 AA                      	stosb
+  1974 000013D4 88D8                    	mov al, bl
+  1975 000013D6 240F                    	and al, 0x0f
+  1976 000013D8 8A0406                  	mov al, [rsi+rax]
+  1977 000013DB AA                      	stosb
+  1978 000013DC C3                      	ret
+  1979                                  
+  1980                                  ;--------------------------------------
+  1981 000013DD 303132333435363738-     aiHex:	db	"0123456789ABCDEF"
+  1981 000013E6 39414243444546     
+  1982                                  
+  1983                                  Bin2Hex:	;
+  1984                                  	; convert 2 bytes binary to 4 char hex string
+  1985                                  	; in: ax (ah=MSByte, al=LSByte), rdi = add for output
+  1986                                  	; out: at [rdi]; MS hex digit at lowest mem
+  1987 000013ED 48BE-                   	mov rsi, aiHex	; aiHex= array of 16 byte chars used for conversion
+  1987 000013EF [DD13000000000000] 
+  1988 000013F7 4883C703                	add rdi, 03
+  1989 000013FB 57                      	push rdi
+  1990 000013FC FD                      	std		; so watch out leaves directio bit as such!
+  1991                                  
+  1992 000013FD 6689C3                  	mov bx, ax
+  1993 00001400 4883E00F                	and rax, 0x0f
+  1994 00001404 8A0406                  	mov al, [rsi+rax]
+  1995 00001407 AA                      	stosb
+  1996                                  
+  1997 00001408 48C1EB04                	shr rbx, 4
+  1998 0000140C 4889D8                  	mov rax, rbx
+  1999 0000140F 4883E00F                	and rax, 0x0f
+  2000 00001413 8A0406                  	mov al, [rsi+rax]
+  2001 00001416 AA                      	stosb
+  2002                                  
+  2003 00001417 48C1EB04                	shr rbx, 4
+  2004 0000141B 4889D8                  	mov rax, rbx
+  2005 0000141E 4883E00F                	and rax, 0x0f
+  2006 00001422 8A0406                  	mov al, [rsi+rax]
+  2007 00001425 AA                      	stosb
+  2008                                  
+  2009 00001426 48C1EB04                	shr rbx, 4
+  2010 0000142A 4889D8                  	mov rax, rbx
+  2011 0000142D 4883E00F                	and rax, 0x0f
+  2012 00001431 8A0406                  	mov al, [rsi+rax]
+  2013 00001434 AA                      	stosb
+  2014                                  
+  2015 00001435 5F                      	pop rdi
+  2016 00001436 48FFC7                  	inc rdi
+  2017 00001439 C3                      	ret
+  2018                                  ;--------------------------------------
+  2019                                  BinNHex:	; in:	on stack: X= Bin value, N =1..16 number of Hex chars
+  2020                                  		; do: 	cvt Bin to Hex format with N chars in Out
+  2021                                  		; out:  appended to Out the N chars long Hex format in GE
+  2022                                  		;	If too small pad left with "0" 
+  2023                                  		; 	If too long drop MS part
+  2024                                  		;	Hex uses uppercase ("A" to "F")
+  2025                                  
+  2026                                  ; 1. prepare fields with zero's
+  2027 0000143A 5B                      	pop rbx			; return address
+  2028 0000143B 4C89D7                  	mov rdi, rOutPnt
+  2029 0000143E FC                      	cld
+  2030 0000143F B030                    	mov al, "0"
+  2031 00001441 59                      	pop rcx			; =N
+  2032 00001442 4883E11F                	and rcx, 0x1f		; safety: max 31 hex char output
+  2033 00001446 4889CA                  	mov rdx, rcx		; rcx = rdx = N
+  2034 00001449 F3AA                    	rep stosb		; rdi pnts to 1st non filled
+  2035 0000144B 48FFCF                  	dec rdi			; pnts to the lsd to be calculated
+  2036                                  	
+  2037 0000144E 58                      	pop rax			; =X
+  2038 0000144F 53                      	push rbx		; 4ret
+  2039                                  
+  2040                                  ; 2. convert rax niblles to hex digits
+  2041                                  
+  2042 00001450 4C39D7                  .bnh1:	cmp rdi, rOutPnt
+  2043 00001453 7C1E                    	jl .bnh2
+  2044 00001455 88C3                    	mov	bl, al
+  2045 00001457 80E30F                  	and 	bl, 0x0F
+  2046 0000145A 80C330                  	add	bl, "0"
+  2047 0000145D 80FB39                  	cmp 	bl, "9"
+  2048 00001460 7603                    	jbe	.bnh3
+  2049 00001462 80C307                  	add	bl,"A"-"9"-1
+  2050                                  	
+  2051 00001465 881F                    .bnh3:	mov [rdi], bl
+  2052 00001467 48C1E804                	shr rax, 4		; rax=X' = X' / 2^4 
+  2053 0000146B 48FFCF                  	dec rdi
+  2054 0000146E 48FFC9                  	dec rcx			; rcx=N' := N'-1
+  2055 00001471 75DD                    	jnz .bnh1
+  2056                                  
+  2057 00001473 4901D2                  .bnh2:	add rOutPnt, rdx	; extend sOut with N chars
+  2058 00001476 4831C9                  	xor rcx, rcx
+  2059 00001479 48FFC1                  	inc rcx
+  2060 0000147C C3                      	ret
+  2061                                  
+  2062                                  ;--------------------------------------
+  2063                                  Bin2Dec:
+  2064                                  	; convert one byte value to decimal bcd unpacked
+  2065                                  	; in:	rax (< 0x100)
+  2066                                  	; out:	at [rdi] in GE, at [rdi +4] in LE order
+  2067                                  	; uses:	rbx, rsi
+  2068 0000147D 4831DB                  	xor rbx, rbx
+  2069 00001480 88C3                    	mov bl, al
+  2070 00001482 240F                    	and al, 0x0f
+  2071 00001484 3C0A                    	cmp al, 10
+  2072 00001486 7C06                    	jl Bin2D4
+  2073 00001488 4805F6000000            	add rax, 0xf6
+  2074 0000148E 80E3F0                  Bin2D4:	and bl, 0xf0
+  2075 00001491 C0EB02                  	shr bl, 2
+  2076 00001494 48BE-                   	mov rsi, aMul16
+  2076 00001496 [D814000000000000] 
+  2077 0000149E 03041E                  	add eax, [rsi+rbx]
+  2078 000014A1 3C0A                    	cmp al, 10
+  2079 000014A3 7C08                    	jl Bin2D1
+  2080 000014A5 480500010000            	add rax, 0x100
+  2081 000014AB 2C0A                    	sub al, 10
+  2082 000014AD 80FC0A                  Bin2D1:	cmp ah, 10
+  2083 000014B0 7C09                    	jl Bin2D2
+  2084 000014B2 480500000100            	add rax, 0x010000
+  2085 000014B8 80EC0A                  	sub ah, 10
+  2086 000014BB 0530303030              Bin2D2:	add eax,"0000"
+  2087 000014C0 894704                  	mov [rdi+4], eax
+  2088 000014C3 8A5F06                  	mov bl, [rdi+6]
+  2089 000014C6 80FB30                  	cmp bl, "0"
+  2090 000014C9 7405                    	je Bin2D3
+  2091 000014CB 881F                    	mov [rdi], bl
+  2092 000014CD 48FFC7                  	inc rdi
+  2093 000014D0 8827                    Bin2D3: mov [rdi], ah
+  2094 000014D2 48FFC7                  	inc rdi
+  2095 000014D5 FC                      	cld
+  2096 000014D6 AA                      	stosb
+  2097 000014D7 C3                      	ret
+  2098                                  	
+  2099 000014D8 000000000601000002-     aMul16:	db 0,0,0,0, 6,1,0,0, 2,3,0,0, 8,4,0,0, 4,6,0,0, 0,8,0,0, 6,9,0,0, 2,1,1,0
+  2099 000014E1 030000080400000406-
+  2099 000014EA 000000080000060900-
+  2099 000014F3 0002010100         
+  2100                                  	;  0        1        2        3        4        5        6        7
+  2101 000014F8 080201000404010000-     	db 8,2,1,0, 4,4,1,0, 0,6,1,0, 6,7,1,0, 2,9,1,0, 8,0,2,0, 4,2,2,0, 0,4,2,0
+  2101 00001501 060100060701000209-
+  2101 0000150A 010008000200040202-
+  2101 00001513 0000040200         
+  2102                                  	;  8        9        A        B        C        D        E        F
+  2103                                  
+  2104                                  ;------------------------------------------------------------------------------
+  2105                                  
+  2106                                  Bin4Dec:	; in:	rax=X binary value 4 byte LSB, MSB is ingored,
+  2107                                  		; do: 	cvt X to decimal value in N=10 ascii digits format at rdi
+  2108                                  		; out:  append to [rdi] the N digit value of X
+  2109                                  		;	pad left with "0" if too small
+  2110                                  		; 	truncate left if too big
+  2111                                  		
+  2112                                  ; 1. prepare fields with zero's (can also be spaces)
+  2113 00001518 51                      	push	rcx
+  2114 00001519 50                      	push	rax
+  2115 0000151A 4889FE                  	mov	rsi, rdi
+  2116 0000151D FC                      	cld
+  2117 0000151E B030                    	mov	al, "0"
+  2118 00001520 B90A000000              	mov	rcx, 10		; max 10 digits significant
+  2119 00001525 4889CA                  	mov	rdx, rcx
+  2120 00001528 F3AA                    	rep	stosb		; rdi pnts to 1st non filled
+  2121 0000152A 48FFCF                  	dec	rdi			; pnts to the lsd to be calculated
+  2122                                  	
+  2123 0000152D 58                      	pop	rax
+  2124 0000152E BB0A000000              	mov	rbx, 10		; rbx = max number of digits to cvt
+  2125                                  
+  2126                                  ; 2. convert rax to ascii decimal (20 digits)
+  2127 00001533 B90A000000              	mov	rcx, 10		; divisor
+  2128 00001538 4839F7                  .B4D1:	cmp	rdi, rsi
+  2129 0000153B 7C10                    	jl 	.B4D2
+  2130 0000153D 4831D2                  	xor	rdx, rdx
+  2131 00001540 48F7F1                  	div	rcx		; rax = quotient of rdx:rax/100, rdx = remainder
+  2132 00001543 0017                    	add	byte [rdi], dl
+  2133 00001545 48FFCF                  	dec	rdi
+  2134 00001548 4809C0                  	or	rax, rax	; check if last digit done = quotient is zero
+  2135 0000154B 75EB                    	jnz .B4D1
+  2136                                  
+  2137 0000154D 59                      .B4D2:	pop	rcx
+  2138 0000154E C3                      	ret
+  2139                                  
+  2140                                  ;------------------------------------------------------------------------------
+  2141                                  
+  2142                                  BinNDec:	; in:	on stack: X binary value 8 bytes, N=number of digits
+  2143                                  		; do: 	cvt X to decimal value in N decimal digits (=N chars)
+  2144                                  		; out:  append to Out the N decimal digits value of X
+  2145                                  		;	If to small padded left with "0" 
+  2146                                  		; 	If to big truncated left (MS part)
+  2147                                  
+  2148                                  ; 1. prepare fields with zero's
+  2149 0000154F 5B                      	pop rbx			; return address
+  2150 00001550 4C89D7                  	mov rdi, rOutPnt
+  2151 00001553 FC                      	cld
+  2152 00001554 B030                    	mov al, "0"
+  2153 00001556 59                      	pop	rcx		; =N
+  2154 00001557 4883E11F                	and	rcx, 0x1f	; max 31 digits, but max only then 20 filled
+  2155 0000155B 4889CA                  	mov	rdx, rcx
+  2156 0000155E F3AA                    	rep	stosb		; rdi pnts to 1st non filled
+  2157 00001560 48FFCF                  	dec	rdi		; pnts to the lsd to be calculated
+  2158                                  	
+  2159 00001563 58                      	pop	rax		; =X
+  2160 00001564 53                      	push	rbx		; on stack return address
+  2161 00001565 4889D3                  	mov	rbx, rdx	; rbx = max number of digits to out
+  2162                                  
+  2163                                  ; 2. convert rax to ascii decimal (20 digits)
+  2164 00001568 B90A000000              	mov	rcx, 10
+  2165 0000156D 4C39D7                  .BND1:	cmp	rdi, rOutPnt
+  2166 00001570 7C10                    	jl	.BND2
+  2167 00001572 4831D2                  	xor	rdx, rdx
+  2168 00001575 48F7F1                  	div	rcx		; rax = quotient of rdx:rax/100, rdx = remainder
+  2169 00001578 0017                    	add	byte [rdi], dl
+  2170 0000157A 48FFCF                  	dec	rdi
+  2171 0000157D 4809C0                  	or	rax, rax	; check if last digit done = quotient is zero
+  2172 00001580 75EB                    	jnz	.BND1
+  2173                                  
+  2174 00001582 4901DA                  .BND2:	add	rOutPnt, rbx
+  2175 00001585 4831C9                  	xor	rcx, rcx
+  2176 00001588 48FFC1                  	inc	rcx
+  2177 0000158B C3                      	ret
+  2178                                  ;------------------------------------------------------------------------------
+  2179                                  Dec2Bin:	;
+  2180                                  	; Decimal ascii (at rLastIN) to binary (in rax)
+  2181                                  	; msb to lsb
+  2182                                  	; in: rLastIn, rLastinLen
+  2183                                  	; out: rax = 8b binary value of ascii decimals at rLastIn
+  2184                                  	; uses: rdi, rsi, rdx, rax, rbx, rcx=1
+  2185 0000158C 4C89DE                  	mov	rsi, rLastIn
+  2186 0000158F 4C89E1                  	mov	rcx, rLastInLen
+  2187 00001592 BF0A000000              	mov	rdi, 10		; rdx used by mul-operator! 
+  2188 00001597 4831C0                  	xor	rax, rax
+  2189 0000159A 4831DB                  	xor	rbx, rbx
+  2190 0000159D FC                      	cld
+  2191                                  Dec2B2:
+  2192 0000159E AC                      	lodsb
+  2193 0000159F 2C30                    	sub	al, 0x30
+  2194 000015A1 3C0A                    	cmp	al, 10
+  2195 000015A3 7D17                    	jge	Dec2BEr1
+  2196 000015A5 4801D8                  	add	rax, rbx
+  2197 000015A8 7212                    	jc	Dec2BEr1
+  2198                                  	
+  2199 000015AA FFC9                    	dec	ecx
+  2200 000015AC 740A                    	jz	Dec2B1
+  2201                                  
+  2202 000015AE 4889FA                  	mov	rdx, rdi
+  2203 000015B1 F7E2                    	mul	edx
+  2204 000015B3 4889C3                  	mov	rbx, rax
+  2205 000015B6 EBE6                    	jmp	Dec2B2
+  2206                                  
+  2207                                  Dec2B1:
+  2208 000015B8 48FFC1                  	inc	rcx
+  2209 000015BB C3                      	ret
+  2210                                  
+  2211                                  Dec2BEr1:
+  2212 000015BC B801000000              	mov	rax, 01	
+  2213 000015C1 4831C9                  	xor	rcx, rcx
+  2214 000015C4 C3                      	ret
+  2215                                  									; todo?
+  2216 000015C5 E807F3FFFF              	call	ErrorMessage
+  2217 000015CA 1B4F766572666C6F77-     	 db 27, 'Overflow decimal conversion'
+  2217 000015D3 20646563696D616C20-
+  2217 000015DC 636F6E76657273696F-
+  2217 000015E5 6E                 
+  2218                                  	
+  2219                                  ; -----------------------------------------------------------------------------
+  2220                                  Hex2Bin:	;
+  2221                                  	; convert 2 hex ascii digits to bin value
+  2222                                  	; in: ax with ah = MSDigit, al = LSDigit
+  2223                                  	; out: al
+  2224 000015E6 80EC30                  	sub ah, 0x30
+  2225 000015E9 7237                    	jc Hex2BErr
+  2226 000015EB 80FC09                  	cmp ah, 0x09		; 0..9? (30-39)
+  2227 000015EE 7E14                    	jle Hex2B1
+  2228 000015F0 80EC07                  	sub ah, 0x07
+  2229 000015F3 722D                    	jc Hex2BErr
+  2230 000015F5 80FC0F                  	cmp ah, 0x0F		; A..F? (41..46)
+  2231 000015F8 7E0A                    	jle Hex2B1
+  2232 000015FA 80EC20                  	sub ah, 0x20
+  2233 000015FD 7223                    	jc Hex2BErr
+  2234 000015FF 80FC0F                  	cmp ah, 0x0F		; a..f? (61..66)
+  2235 00001602 7F1E                    	jg Hex2BErr
+  2236                                  Hex2B1:
+  2237 00001604 2C30                    	sub al, 0x30
+  2238 00001606 721A                    	jc Hex2BErr
+  2239 00001608 3C09                    	cmp al, 0x09		; 0..9? (30-39)
+  2240 0000160A 7E10                    	jle Hex2B2
+  2241 0000160C 2C07                    	sub al, 0x07
+  2242 0000160E 7212                    	jc Hex2BErr
+  2243 00001610 3C0F                    	cmp al, 0x0F		; A..F? (41..46)
+  2244 00001612 7E08                    	jle Hex2B2
+  2245 00001614 2C20                    	sub al, 0x20
+  2246 00001616 720A                    	jc Hex2BErr
+  2247 00001618 3C0F                    	cmp al, 0x0F		; a..f? (61..66)
+  2248 0000161A 7F06                    	jg Hex2BErr
+  2249                                  Hex2B2:	
+  2250 0000161C C0E004                  	shl al, 4
+  2251 0000161F 00E0                    	add al, ah
+  2252 00001621 C3                      	ret
+  2253                                  	
+  2254                                  Hex2BErr:
+  2255 00001622 E8AAF2FFFF              	call ErrorMessage
+  2256 00001627 27496C6C6567616C20-     	 db 39, "Illegal input during Hex2Bin conversion"
+  2256 00001630 696E70757420647572-
+  2256 00001639 696E67204865783242-
+  2256 00001642 696E20636F6E766572-
+  2256 0000164B 73696F6E           
+  2257                                  
+  2258                                  ;xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+  2259                                  ;                        	   FILING
+  2260                                  ;xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+  2261                                  
+  2262                                  ;-------------- File descriptors ----------------------------------------------
+  2263                                  stdin		equ	0		; nu
+  2264                                  stdout		equ	1
+  2265                                  stderr		equ	2		; nu
+  2266                                  
+  2267                                  ;-------------- FileSyscall (some common used)---------------------------------
+  2268                                  sys_read	equ	0
+  2269                                  sys_write	equ	1
+  2270                                  sys_open	equ	2
+  2271                                  sys_close	equ	3
+  2272                                  sys_stat	equ	4	; in: rdi= pnt_filename,
+  2273                                  				; rsi= pnt struct stat *statbuf
+  2274                                  sys_fstat	equ	5	; in: rdi= fd, rsi= pnt struct stat *statbuf
+  2275                                  sys_lseek	equ	008
+  2276                                  sys_create	equ	085
+  2277                                  sys_unlink	equ	087	; = delete file
+  2278                                  
+  2279                                  ;-------------- FileFlag-------------------------------------------------------
+  2280                                  O_RDONLY	equ	00000q	; request open with read only
+  2281                                  O_WRONLY	equ	00001q
+  2282                                  O_RDWR		equ	00002q
+  2283                                  O_SHLOCK	equ	00020q	; ? open with share file lock
+  2284                                  O_EXLOCK	equ	00040q	; ? open with exclusive file lock
+  2285                                  O_CREAT		equ	00100q	; = 0x0040
+  2286                                  O_EXCL		equ	00200q	; in combination with O_CREATE,
+  2287                                  				; if the file exits, do not open it
+  2288                                  O_TRUNC		equ	01000q	; = 0x0200
+  2289                                  O_APPEND	equ	02000q	; = 0x0400
+  2290                                  O_NONBLOCK	equ	04000q	; open file in non blocking mode-sensitive
+  2291                                  O_SYNC		equ	10000q	; allow only one write at a time ??
+  2292                                  O_ASYNC		equ	20000q	; allow multiple writes at a time
+  2293                                  
+  2294                                  ;-------------- FilePermission-------------------------------------------------
+  2295                                  PermUR		equ	0400q
+  2296                                  PermUW		equ	0200q
+  2297                                  PermUX		equ	0100q
+  2298                                  PermURW		equ	0600q	; create / overwrite if exists
+  2299                                  PermARW		equ	0666q	; all read write
+  2300                                  PermARWX	equ	0777q
+  2301                                  
+  2302                                  				; FileSeekWhence
+  2303                                  SEEK_SET	equ	0	; offset from start of file
+  2304                                  SEEK_CUR	equ	1	; offset from current offset
+  2305                                  SEEK_END	equ	2	; offset from end of file, so over the edge
+  2306                                  
+  2307                                  
+  2308                                  ;xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+  2309                                  ;		Display EBNF context (for debugging) (delete in PROD)
+  2310                                  ;xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+  2311                                  dspebnf:	; dspebnf shows the status of the EBNF parser.
+  2312                                  
+  2313 0000164F E83AF2FFFF              	call Message			; display pOK
+  2314 00001654 0E0A436F6E74657874-     	 db 14, 10, "Context: pOk="
+  2314 0000165D 3A20704F6B3D       
+  2315 00001663 E30C                    	jrcxz dspeb1
+  2316 00001665 E824F2FFFF              	call Message
+  2317 0000166A 0454727565              	 db 4,  "True"
+  2318 0000166F EB0B                    	jmp dspeb2
+  2319 00001671 E818F2FFFF              dspeb1: call Message
+  2320 00001676 0546616C7365            	 db 5,  "False"
+  2321                                  dspeb2:
+  2322                                  
+  2323 0000167C E80DF2FFFF              	call Message			; display InEnd
+  2324 00001681 0720496E456E643D        	 db 7, " InEnd="
+  2325 00001689 4D09F6                  	 or rInEndFlg, rInEndFlg
+  2326 0000168C 740D                    	jz dspeb3
+  2327 0000168E E8FBF1FFFF              	call Message
+  2328 00001693 05547275650A            	 db 5,  "True",10
+  2329 00001699 EB0C                    	jmp dspeb4
+  2330 0000169B E8EEF1FFFF              dspeb3: call Message
+  2331 000016A0 0646616C73650A          	 db 6,  "False",10
+  2332                                  dspeb4:
+  2333                                  					; display sIn + sInPnt position
+  2334 000016A7 4C89C6                  	mov rsi, rInPnt
+  2335 000016AA 4883EE40                	sub rsi, 0x40
+  2336 000016AE 483B75F8                	cmp rsi, mMem0
+  2337 000016B2 7C05                    	jl .de1
+  2338 000016B4 E8(00000000)            	call dmphexrsi
+  2339 000016B9 E8D0F1FFFF              .de1:	call Message
+  2340 000016BE 083C496E506E743E0A      	 db 8, "<InPnt>", 10
+  2341 000016C7 4C89C6                  	mov rsi, rInPnt
+  2342 000016CA E8(00000000)            	call dmphexrsi
+  2343                                  	
+  2344 000016CF E8BAF1FFFF              	call Message
+  2345 000016D4 054F75743A0A            	 db 5,  "Out:",10	
+  2346                                  					; display sOut + sOutPnt position
+  2347 000016DA 4C89D6                  	mov rsi, rOutPnt
+  2348 000016DD 4883EE40                	sub rsi, 0x40
+  2349 000016E1 483B75F8                	cmp rsi, mMem0
+  2350 000016E5 7C05                    	jl .de2
+  2351 000016E7 E8(00000000)            	call dmphexrsi
+  2352 000016EC E89DF1FFFF              .de2:	call Message
+  2353 000016F1 093C4F7574506E743E-     	 db 9, "<OutPnt>", 10
+  2353 000016FA 0A                 
+  2354 000016FB 4C89D6                  	mov rsi, rOutPnt
+  2355 000016FE E8(00000000)            	call dmphexrsi
+  2356                                  
+  2357                                  					; display LastIn and LastInLen
+  2358 00001703 E886F1FFFF              	call Message
+  2359 00001708 0A4C617374496E2020-     	 db 10, "LastIn    "
+  2359 00001711 2020               
+  2360 00001713 E8(00000000)            	call dsprex
+  2361 00001718 723131                  	 db "r11"
+  2362                                  
+  2363 0000171B E86EF1FFFF              	call Message
+  2364 00001720 0A4C617374496E4C65-     	 db 10, "LastInLen "
+  2364 00001729 6E20               
+  2365 0000172B E8(00000000)            	call dsprex
+  2366 00001730 723132                  	 db "r12"
+  2367                                  
+  2368 00001733 E856F1FFFF              	call Message
+  2369 00001738 0122                       	 db 1, 34
+  2370 0000173A 4C89DE                  	mov rsi, rLastIn
+  2371 0000173D 4C89E2                  	mov rdx, rLastInLen
+  2372 00001740 B801000000              	mov rax,1
+  2373 00001745 BF01000000              	mov rdi,1
+  2374 0000174A 51                      	push rcx	; retain rcx=rPOk
+  2375 0000174B 4153                    	push r11	; retain r11=LastIn
+  2376 0000174D 0F05                    	syscall
+  2377 0000174F 415B                    	pop r11
+  2378 00001751 59                      	pop rcx
+  2379 00001752 E837F1FFFF              	call Message
+  2380 00001757 02220A                     	 db 2, 34, 10
+  2381                                  
+  2382 0000175A 4156                       	  push r14
+  2383                                  
+  2384 0000175C E82DF1FFFF              	call Message
+  2385 00001761 0A496E426567202020-     	 db 10, "InBeg     "
+  2385 0000176A 2020               
+  2386 0000176C 4C8B75F0                	 mov r14, In0
+  2387 00001770 E8(00000000)               	call dsprex
+  2388 00001775 723134                  	 db "r14"
+  2389                                  
+  2390 00001778 E811F1FFFF              	call Message
+  2391 0000177D 0A496E456E64202020-     	 db 10, "InEnd     "
+  2391 00001786 2020               
+  2392 00001788 4D89CE                  	 mov r14, rInEnd
+  2393 0000178B E8(00000000)               	call dsprex
+  2394 00001790 723134                  	 db "r14"
+  2395                                  
+  2396 00001793 E8F6F0FFFF              	call Message
+  2397 00001798 0A496E506E744D6178-     	 db 10, "InPntMax  "
+  2397 000017A1 2020               
+  2398 000017A3 4C8B75E8                	 mov r14, InPntMax
+  2399 000017A7 E8(00000000)               	call dsprex
+  2400 000017AC 723134                  	 db "r14"
+  2401                                  
+  2402 000017AF E8DAF0FFFF              	call Message
+  2403 000017B4 0A4F75744265672020-     	 db 10, "OutBeg    "
+  2403 000017BD 2020               
+  2404 000017BF 4C8B75C0                	 mov r14, Out0
+  2405 000017C3 E8(00000000)               	call dsprex
+  2406 000017C8 723134                  	 db "r14"
+  2407                                  
+  2408 000017CB E8BEF0FFFF              	call Message
+  2409 000017D0 0A4F7574427566456E-     	 db 10, "OutBufEnd "
+  2409 000017D9 6420               
+  2410 000017DB 4C8B75B8                	 mov r14, OutBufEnd
+  2411 000017DF E8(00000000)               	call dsprex
+  2412 000017E4 723134                  	 db "r14"
+  2413                                  
+  2414 000017E7 E8A2F0FFFF              	call Message
+  2415 000017EC 0A4C626C4E78744E65-     	 db 10, "LblNxtNew "
+  2415 000017F5 7720               
+  2416 000017F7 4C8B75B0                	 mov r14, LblNxtNew
+  2417 000017FB E8(00000000)               	call dsprex
+  2418 00001800 723134                  	 db "r14"
+  2419                                  
+  2420 00001803 415E                    	  pop r14
+  2421                                  
+  2422 00001805 C3                      ret
+  2423                                  
+  2424                                  

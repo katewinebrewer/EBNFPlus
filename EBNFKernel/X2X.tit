@@ -1,0 +1,59 @@
+;******************************************************************************
+; X2X.asm interfaces the file system with the parser.
+; Example code: .. F2I ("hi.bnf"), I2O(*Grammar), O2F ("hi.asm") .. loads the
+; file "hi.bnf", parses it as by Grammar def. and saves result in "hi.asm".
+; Process:       load          parse        save
+;	 -----    F2I   -----   I2O   -----  O2F      -----
+;     input file --o-->  sIn   --o-->  sOut --o--> output file
+;	 -----	        -----         -----           -----
+;		    In0..rInEnd      Out0..
+;		    rInPnt-->	     rOutPnt--> (grows maximal to OutBufEnd)
+; Note: IP.asm interfaces the network with the parser using S2I, O2S and alike.
+;******************************************************************************
+
+F2I	; File to Memory
+	; use:	~ (sFPN)
+	; do:	1. open file, named sFpn
+	; 	2. read into memory starting at In0
+	;	3. when done, set rInEnd
+	;	4. close file.
+   Calls: syscall, ErrorMessage, syscall, ErrorMessage, ErrorMessage, syscall, ErrorMessage.
+
+E2O	; Empty to Memory, for creating only output without input.
+	; use:	~(*function)
+	; do:	Start function for output without source for parsing
+	;	Output starts at Out0 and ends at rOutPnt
+	;	No parse possible since sIn is empty
+   Calls.
+
+I2O	; In to Out, maps sIn to sOut as defined by grammar.
+	; use:	~(*grammar) 	memory grows from Out0 to rOutPnt
+	; do:	1. start grammar any out put starts from Out0
+	; 	2. When all parsed, set OutEnd.
+   Calls: rbx.
+
+O2F	; Out to File
+	; use:	~(sFPN)		memory use is implicit from Out0.. rOutPnt
+	; Do:	1. create file (overwrite previous file if there)
+	;	2. write file content Out0 to OutEnd.
+   Calls: syscall, ErrorMessage, syscall, ErrorMessage, syscall, ErrorMessage.
+
+O2I	; Output to In, so copy sOut to sIn, reset context to parse sIn
+	; use:	~()
+	; do:	copy Out to In
+	;	set In0, rInEnd, Out0 (=rInEnd) and rOutPnt (=rInEnd)
+   Calls.
+
+F2O0	; File to Output, overwrite existing sOut
+	; use:	~(sFpn)
+	; do:	load file at Out0    (so renews Out)
+   Calls.
+
+F2O	; File to Output, append to existing sOut)
+	; use:	~(sFpn),	
+	; do:	1. open file, named sFpn
+	; 	2. read into memory starting at Out0
+	;	3. when done, set OutEnd
+	;	4. close file.
+   Calls: syscall, syscall, ErrorMessage, ErrorMessage, syscall, ErrorMessage.
+
